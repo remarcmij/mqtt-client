@@ -3,6 +3,7 @@
 #include "secrets.h"
 #include "thermometer.h"
 #include <Arduino.h>
+#include <OneButton.h>
 #include <PubSubClient.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
@@ -11,7 +12,6 @@
 
 #include "Calibri32.h"
 #include "NotoSansBold15.h"
-
 #define digits Calibri32
 #define small NotoSansBold15
 
@@ -26,9 +26,6 @@ const char *mqttServer = MQTT_SERVER;
 const char *ntpServer = "time.google.com";
 const long gmtOffset_sec = 3600 * 1;
 const int daylightOffset_sec = 3600 * 1;
-
-uint32_t targetTime = 0;
-uint32_t secondsSinceLastMessage = 0;
 
 // Display rotated
 const uint32_t displayHeight = TFT_WIDTH;
@@ -45,6 +42,21 @@ struct payload_t {
   float humidity;
 };
 
+struct reading_t {
+  String sensor;
+  String location;
+  float temperature;
+  float humidity;
+};
+
+namespace {
+int app_cpu = 0;
+QueueHandle_t qhReading = nullptr;
+SemaphoreHandle_t semDisplay = nullptr;
+
+uint32_t targetTime = 0;
+uint32_t secondsSinceLastMessage = 0;
+
 auto tft = TFT_eSPI();
 auto tempSprite = TFT_eSprite(&tft);
 auto humSprite = TFT_eSprite(&tft);
@@ -54,6 +66,10 @@ WiFiClient wifiClient;
 PubSubClient client(wifiClient);
 
 uint8_t messageCount{};
+uint32_t volt;
+
+OneButton lowerButton(LOWER_BUTTON_PIN);
+OneButton upperButton(UPPER_BUTTON_PIN);
 
 void reconnect() {
   // Loop until we're reconnected
@@ -73,43 +89,69 @@ void reconnect() {
   }
 }
 
-void drawData(const payload_t &payload) {
-  String strTemperature{String(payload.temperature, 1) + "°C"};
+void displayTask(void *argp) {
+  BaseType_t rc;
+  reading_t reading;
+  UBaseType_t hwmStack = 0;
 
-  tempSprite.createSprite(90, 26);
-  tempSprite.fillSprite(backgroundColor);
-  tempSprite.loadFont(digits);
-  tempSprite.setTextColor(TFT_BLACK, backgroundColor);
-  tempSprite.drawString(strTemperature, 0, 0, 4);
-  tempSprite.pushSprite(56, 22);
+  for (;;) {
+    if (targetTime < millis()) {
+      // Set next update for 1 second later
+      targetTime = millis() + 1000;
 
-  String strHumidity{String(payload.humidity, 0) + "%"};
+      rc = xQueuePeek(qhReading, &reading, 0);
+      if (rc == pdPASS) {
+        String strTemperature{String(reading.temperature, 1) + "°C"};
 
-  humSprite.createSprite(60, 26);
-  humSprite.fillSprite(backgroundColor);
-  humSprite.loadFont(digits);
-  humSprite.setTextColor(TFT_BLACK, backgroundColor);
-  humSprite.drawString(strHumidity, 0, 0, 4);
-  humSprite.pushSprite(198, 22);
+        tempSprite.createSprite(90, 26);
+        tempSprite.fillSprite(backgroundColor);
+        tempSprite.loadFont(digits);
+        tempSprite.setTextColor(TFT_BLACK, backgroundColor);
+        tempSprite.drawString(strTemperature, 0, 0, 4);
+        tempSprite.pushSprite(56, 22);
 
-  detailsSprite.createSprite(displayWidth, 80);
-  detailsSprite.fillSprite(TFT_DARKGREY);
-  detailsSprite.loadFont(small);
-  detailsSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
+        String strHumidity{String(reading.humidity, 0) + "%"};
 
-  int32_t y = 4;
-  String strLocation{"Location: " + payload.location};
-  detailsSprite.drawString(strLocation, 4, y);
+        humSprite.createSprite(60, 26);
+        humSprite.fillSprite(backgroundColor);
+        humSprite.loadFont(digits);
+        humSprite.setTextColor(TFT_BLACK, backgroundColor);
+        humSprite.drawString(strHumidity, 0, 0, 4);
+        humSprite.pushSprite(198, 22);
 
-  y += 17;
-  String strSample{"Sample: " + String(payload.bootCount)};
-  detailsSprite.drawString(strSample, 4, y);
+        detailsSprite.createSprite(displayWidth, 80);
+        detailsSprite.fillSprite(TFT_DARKGREY);
+        detailsSprite.loadFont(small);
+        detailsSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
 
-  y += 17;
-  String strCounter{"Counter: " + String(secondsSinceLastMessage)};
-  detailsSprite.drawString(strCounter, 4, y);
+        int32_t y = 4;
+        // String strLocation{"Location: " + payload.location};
+        // detailsSprite.drawString(strLocation, 4, y);
 
-  detailsSprite.pushSprite(0, displayHeight - 80);
+        // y += 17;
+        // String strSample{"Sample: " + String(payload.bootCount)};
+        // detailsSprite.drawString(strSample, 4, y);
+
+        // y += 17;
+        String strCounter{"Counter: " + String(secondsSinceLastMessage++)};
+        detailsSprite.drawString(strCounter, 4, y);
+
+        volt = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
+        y += 17;
+        String strBattery{"Battery: " + String(volt) + "mv"};
+        detailsSprite.drawString(strBattery, 4, y);
+        detailsSprite.pushSprite(0, displayHeight - 80);
+      }
+    }
+
+    auto hwmCurrent = uxTaskGetStackHighWaterMark(nullptr);
+    if (!hwmStack || hwmCurrent > hwmStack) {
+      hwmStack = hwmCurrent;
+      log_d("displayTask stack highwater mark %u", hwmStack);
+    }
+
+    delay(10);
+  }
 }
 
 void callback(char *topic, byte *payloadRaw, unsigned int length) {
@@ -125,21 +167,45 @@ void callback(char *topic, byte *payloadRaw, unsigned int length) {
   auto rc = deserializeJson(doc, json);
   assert(rc == DeserializationError::Ok);
 
-  payload_t payload{.bootCount = doc["boot"].as<uint32_t>(),
-                    .skipCount = doc["skip"].as<uint32_t>(),
-                    .timestamp = doc["time"].as<String>(),
+  reading_t reading{.sensor = doc["sen"].as<String>(),
                     .location = doc["loc"].as<String>(),
                     .temperature = doc["temp"].as<float>(),
                     .humidity = doc["hum"].as<float>()};
+  xQueueOverwrite(qhReading, &reading);
 
-  drawData(payload);
+  // payload_t payload{.bootCount = doc["boot"].as<uint32_t>(),
+  //                   .skipCount = doc["skip"].as<uint32_t>(),
+  //                   .timestamp = doc["time"].as<String>(),
+  //                   .location = doc["loc"].as<String>(),
+  //                   .temperature = doc["temp"].as<float>(),
+  //                   .humidity = doc["hum"].as<float>()};
+
+  // displayTask(payload);
 }
 
+} // namespace
+
+void handleLowerClick() { log_d("Lower button pressed"); }
+
 void setup() {
+  BaseType_t rc;
+
+  app_cpu = xPortGetCoreID();
+
+  semDisplay = xSemaphoreCreateBinary();
+  assert(semDisplay);
+
+  qhReading = xQueueCreate(1, sizeof(reading_t));
+
   Serial.begin(115200);
 
-  pinMode(LOWER_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(UPPER_BUTTON_PIN, INPUT_PULLUP);
+  // Enable battery
+  pinMode(15, OUTPUT);
+  digitalWrite(15, HIGH);
+
+  lowerButton.attachClick(handleLowerClick);
+  // pinMode(LOWER_BUTTON_PIN, INPUT_PULLUP);
+  // pinMode(UPPER_BUTTON_PIN, INPUT_PULLUP);
 
   tft.init();
   tft.fillScreen(TFT_WHITE);
@@ -165,26 +231,20 @@ void setup() {
   // Connect to MQTT server
   client.setServer(mqttServer, MQTT_PORT);
   client.setCallback(callback);
+
+  rc = xTaskCreatePinnedToCore(displayTask, "display", 2000, nullptr, 1,
+                               nullptr, app_cpu);
+  assert(rc == pdPASS);
 }
 
 void loop() {
   if (!client.connected()) {
     reconnect();
   }
+
   client.loop();
+  lowerButton.tick();
+  upperButton.tick();
 
-  if (targetTime < millis()) {
-    // Set next update for 1 second later
-    targetTime = millis() + 1000;
-    secondsSinceLastMessage++;
-    log_d("counter %u", secondsSinceLastMessage);
-  }
-
-  if (digitalRead(UPPER_BUTTON_PIN) == 0) {
-    log_d("Upper button pressed");
-  }
-
-  if (digitalRead(LOWER_BUTTON_PIN) == 0) {
-    log_d("Lower button pressed");
-  }
+  taskYIELD();
 }
