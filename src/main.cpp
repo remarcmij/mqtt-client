@@ -33,6 +33,8 @@ const uint32_t displayWidth = TFT_HEIGHT;
 
 const uint32_t backgroundColor = TFT_WHITE;
 
+int brightness = 50;
+
 struct payload_t {
   uint32_t bootCount;
   uint32_t skipCount;
@@ -88,60 +90,68 @@ void reconnect() {
     }
   }
 }
+void changeBrightnessTask(void *param) {
+  auto buttonPin = (unsigned)param;
+  for (;;) {
+    if (buttonPin == UPPER_BUTTON_PIN && brightness < 240) {
+      brightness++;
+    } else if (buttonPin == LOWER_BUTTON_PIN && brightness > 10) {
+      brightness--;
+    }
+
+    ledcSetup(0, 10000, 8);
+    ledcAttachPin(38, 0);
+    ledcWrite(0, brightness);
+
+    delay(20);
+  }
+}
 
 void displayTask(void *argp) {
   BaseType_t rc;
   reading_t reading;
   UBaseType_t hwmStack = 0;
+  TickType_t ticktime = xTaskGetTickCount();
 
   for (;;) {
-    if (targetTime < millis()) {
-      // Set next update for 1 second later
-      targetTime = millis() + 1000;
+    rc = xQueuePeek(qhReading, &reading, 0);
+    if (rc == pdPASS) {
+      String strTemperature{String(reading.temperature, 1) + "°C"};
 
-      rc = xQueuePeek(qhReading, &reading, 0);
-      if (rc == pdPASS) {
-        String strTemperature{String(reading.temperature, 1) + "°C"};
+      tempSprite.createSprite(90, 26);
+      tempSprite.fillSprite(backgroundColor);
+      tempSprite.loadFont(digits);
+      tempSprite.setTextColor(TFT_BLACK, backgroundColor);
+      tempSprite.drawString(strTemperature, 0, 0, 4);
+      tempSprite.pushSprite(56, 22);
 
-        tempSprite.createSprite(90, 26);
-        tempSprite.fillSprite(backgroundColor);
-        tempSprite.loadFont(digits);
-        tempSprite.setTextColor(TFT_BLACK, backgroundColor);
-        tempSprite.drawString(strTemperature, 0, 0, 4);
-        tempSprite.pushSprite(56, 22);
+      String strHumidity{String(reading.humidity, 0) + "%"};
 
-        String strHumidity{String(reading.humidity, 0) + "%"};
+      humSprite.createSprite(60, 26);
+      humSprite.fillSprite(backgroundColor);
+      humSprite.loadFont(digits);
+      humSprite.setTextColor(TFT_BLACK, backgroundColor);
+      humSprite.drawString(strHumidity, 0, 0, 4);
+      humSprite.pushSprite(198, 22);
 
-        humSprite.createSprite(60, 26);
-        humSprite.fillSprite(backgroundColor);
-        humSprite.loadFont(digits);
-        humSprite.setTextColor(TFT_BLACK, backgroundColor);
-        humSprite.drawString(strHumidity, 0, 0, 4);
-        humSprite.pushSprite(198, 22);
+      detailsSprite.createSprite(displayWidth, 80);
+      detailsSprite.fillSprite(TFT_DARKGREY);
+      detailsSprite.loadFont(small);
+      detailsSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
 
-        detailsSprite.createSprite(displayWidth, 80);
-        detailsSprite.fillSprite(TFT_DARKGREY);
-        detailsSprite.loadFont(small);
-        detailsSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
+      int32_t y = 4;
 
-        int32_t y = 4;
-        // String strLocation{"Location: " + payload.location};
-        // detailsSprite.drawString(strLocation, 4, y);
+      String strCounter{"Counter: " + String(secondsSinceLastMessage++)};
+      detailsSprite.drawString(strCounter, 4, y);
 
-        // y += 17;
-        // String strSample{"Sample: " + String(payload.bootCount)};
-        // detailsSprite.drawString(strSample, 4, y);
+      volt = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
+      y += 17;
+      String strBattery{"Battery: " + String(volt) + "mv"};
+      detailsSprite.drawString(strBattery, 4, y);
+      detailsSprite.pushSprite(0, displayHeight - 80);
+      // }
 
-        // y += 17;
-        String strCounter{"Counter: " + String(secondsSinceLastMessage++)};
-        detailsSprite.drawString(strCounter, 4, y);
-
-        volt = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
-        y += 17;
-        String strBattery{"Battery: " + String(volt) + "mv"};
-        detailsSprite.drawString(strBattery, 4, y);
-        detailsSprite.pushSprite(0, displayHeight - 80);
-      }
+      vTaskDelayUntil(&ticktime, 1000);
     }
 
     auto hwmCurrent = uxTaskGetStackHighWaterMark(nullptr);
@@ -172,20 +182,29 @@ void callback(char *topic, byte *payloadRaw, unsigned int length) {
                     .temperature = doc["temp"].as<float>(),
                     .humidity = doc["hum"].as<float>()};
   xQueueOverwrite(qhReading, &reading);
+}
 
-  // payload_t payload{.bootCount = doc["boot"].as<uint32_t>(),
-  //                   .skipCount = doc["skip"].as<uint32_t>(),
-  //                   .timestamp = doc["time"].as<String>(),
-  //                   .location = doc["loc"].as<String>(),
-  //                   .temperature = doc["temp"].as<float>(),
-  //                   .humidity = doc["hum"].as<float>()};
+void handleLowerClick() { log_d("Lower button pressed"); }
 
-  // displayTask(payload);
+TaskHandle_t brightnessTaskHandle;
+
+void handleLongPressStart(void *param) {
+  if (!brightnessTaskHandle) {
+    BaseType_t rc =
+        xTaskCreatePinnedToCore(changeBrightnessTask, "brightness", 2400, param,
+                                1, &brightnessTaskHandle, 1);
+    assert(rc == pdPASS);
+  }
+}
+
+void handleLongPressStop() {
+  if (brightnessTaskHandle) {
+    vTaskDelete(brightnessTaskHandle);
+    brightnessTaskHandle = nullptr;
+  }
 }
 
 } // namespace
-
-void handleLowerClick() { log_d("Lower button pressed"); }
 
 void setup() {
   BaseType_t rc;
@@ -204,13 +223,24 @@ void setup() {
   digitalWrite(15, HIGH);
 
   lowerButton.attachClick(handleLowerClick);
-  // pinMode(LOWER_BUTTON_PIN, INPUT_PULLUP);
-  // pinMode(UPPER_BUTTON_PIN, INPUT_PULLUP);
+
+  lowerButton.attachLongPressStart(handleLongPressStart,
+                                   (void *)LOWER_BUTTON_PIN);
+  lowerButton.attachLongPressStop(handleLongPressStop);
+
+  upperButton.attachLongPressStart(handleLongPressStart,
+                                   (void *)UPPER_BUTTON_PIN);
+  upperButton.attachLongPressStop(handleLongPressStop);
 
   tft.init();
   tft.fillScreen(TFT_WHITE);
   tft.setRotation(1);
   tft.setSwapBytes(true);
+
+  // Set initial TFT brightness
+  ledcSetup(0, 10000, 8);
+  ledcAttachPin(38, 0);
+  ledcWrite(0, brightness);
 
   tft.pushImage(16, 8, 32, 64, thermometer);
   tft.pushImage(160, 12, 32, 40, humidity);
