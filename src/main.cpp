@@ -9,6 +9,7 @@
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <time.h>
+#include <utility>
 
 #include "Calibri32.h"
 #include "NotoSansBold15.h"
@@ -19,6 +20,8 @@
 #define UPPER_BUTTON_PIN 14
 #define LOWER_BUTTON_PIN 0
 
+namespace {
+
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
 const char *mqttServer = MQTT_SERVER;
@@ -27,22 +30,11 @@ const char *ntpServer = "time.google.com";
 const long gmtOffset_sec = 3600 * 1;
 const int daylightOffset_sec = 3600 * 1;
 
-// Display rotated
-const uint32_t displayHeight = TFT_WIDTH;
-const uint32_t displayWidth = TFT_HEIGHT;
-
 const uint32_t backgroundColor = TFT_WHITE;
 
-int brightness = 50;
-
-struct payload_t {
-  uint32_t bootCount;
-  uint32_t skipCount;
-  String timestamp;
-  String location;
-  float temperature;
-  float humidity;
-};
+uint32_t displayHeight = TFT_HEIGHT;
+uint32_t displayWidth = TFT_WIDTH;
+uint32_t displayBrightness = 50;
 
 struct reading_t {
   String sensor;
@@ -51,72 +43,64 @@ struct reading_t {
   float humidity;
 };
 
-namespace {
-int app_cpu = 0;
 QueueHandle_t qhReading = nullptr;
 SemaphoreHandle_t semDisplay = nullptr;
-
-uint32_t targetTime = 0;
-uint32_t secondsSinceLastMessage = 0;
 
 auto tft = TFT_eSPI();
 auto tempSprite = TFT_eSprite(&tft);
 auto humSprite = TFT_eSprite(&tft);
 auto detailsSprite = TFT_eSprite(&tft);
 
-WiFiClient wifiClient;
-PubSubClient client(wifiClient);
+auto wifiClient = WiFiClient();
+auto pubSubClient = PubSubClient(wifiClient);
 
-uint8_t messageCount{};
-uint32_t volt;
+auto lowerButton = OneButton(LOWER_BUTTON_PIN);
+auto upperButton = OneButton(UPPER_BUTTON_PIN);
 
-OneButton lowerButton(LOWER_BUTTON_PIN);
-OneButton upperButton(UPPER_BUTTON_PIN);
+uint32_t secondsSinceLastUpdate = 0;
 
 void reconnect() {
   // Loop until we're reconnected
-  while (!client.connected()) {
+  while (!pubSubClient.connected()) {
     log_d("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "esp32client-";
-    clientId += String(random(0xffff), HEX);
+    // Create a random pubSubClient ID
+    String clientId = "esp32client-" + String(random(0xffff), HEX);
     // Attempt to connect
-    if (client.connect(clientId.c_str())) {
-      log_d("connected");
-      client.subscribe("/home/sensors");
+    if (pubSubClient.connect(clientId.c_str())) {
+      log_d("...connected");
+      auto success = pubSubClient.subscribe("/home/sensors/+");
+      assert(success);
     } else {
-      log_e("Could not connect to MQTT server, rc=%d", client.state());
+      log_e("Could not connect to MQTT server, rc=%d", pubSubClient.state());
       delay(5000);
     }
   }
 }
 void changeBrightnessTask(void *param) {
-  auto buttonPin = (unsigned)param;
+  auto buttonPin = reinterpret_cast<unsigned>(param);
   for (;;) {
-    if (buttonPin == UPPER_BUTTON_PIN && brightness < 240) {
-      brightness++;
-    } else if (buttonPin == LOWER_BUTTON_PIN && brightness > 10) {
-      brightness--;
+    if (buttonPin == UPPER_BUTTON_PIN && displayBrightness < 240) {
+      displayBrightness++;
+    } else if (buttonPin == LOWER_BUTTON_PIN && displayBrightness > 10) {
+      displayBrightness--;
     }
 
-    ledcSetup(0, 10000, 8);
-    ledcAttachPin(38, 0);
-    ledcWrite(0, brightness);
-
+    ledcWrite(0, displayBrightness);
     delay(20);
   }
 }
 
 void displayTask(void *argp) {
-  BaseType_t rc;
   reading_t reading;
   UBaseType_t hwmStack = 0;
-  TickType_t ticktime = xTaskGetTickCount();
+  uint32_t freeHeapSize = 0;
+
+  auto ticktime = xTaskGetTickCount();
 
   for (;;) {
-    rc = xQueuePeek(qhReading, &reading, 0);
+    auto rc = xQueuePeek(qhReading, &reading, 0);
     if (rc == pdPASS) {
-      String strTemperature{String(reading.temperature, 1) + "°C"};
+      auto strTemperature = String(reading.temperature, 1) + "°C";
 
       tempSprite.createSprite(90, 26);
       tempSprite.fillSprite(backgroundColor);
@@ -125,7 +109,7 @@ void displayTask(void *argp) {
       tempSprite.drawString(strTemperature, 0, 0, 4);
       tempSprite.pushSprite(56, 22);
 
-      String strHumidity{String(reading.humidity, 0) + "%"};
+      auto strHumidity = String(reading.humidity, 0) + "%";
 
       humSprite.createSprite(60, 26);
       humSprite.fillSprite(backgroundColor);
@@ -140,32 +124,31 @@ void displayTask(void *argp) {
       detailsSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
 
       int32_t y = 4;
+      detailsSprite.drawString(reading.sensor, 4, y);
 
-      String strCounter{"Counter: " + String(secondsSinceLastMessage++)};
+      y += 17;
+      auto strCounter = "Counter: " + String(secondsSinceLastUpdate++);
       detailsSprite.drawString(strCounter, 4, y);
 
-      volt = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
+      auto battery_mv = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
       y += 17;
-      String strBattery{"Battery: " + String(volt) + "mv"};
+      auto strBattery = "Battery: " + String(battery_mv / 1000., 2) + "V";
       detailsSprite.drawString(strBattery, 4, y);
       detailsSprite.pushSprite(0, displayHeight - 80);
-      // }
-
-      vTaskDelayUntil(&ticktime, 1000);
     }
 
-    auto hwmCurrent = uxTaskGetStackHighWaterMark(nullptr);
-    if (!hwmStack || hwmCurrent > hwmStack) {
-      hwmStack = hwmCurrent;
-      log_d("displayTask stack highwater mark %u", hwmStack);
-    }
-
-    delay(10);
+    vTaskDelayUntil(&ticktime, 1000);
   }
 }
 
 void callback(char *topic, byte *payloadRaw, unsigned int length) {
-  secondsSinceLastMessage = 0;
+  secondsSinceLastUpdate = 0;
+
+  auto strTopic = String(topic);
+  auto pos = strTopic.lastIndexOf('/');
+  assert(pos != -1);
+  auto strSensor = strTopic.substring(pos + 1);
+
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
@@ -177,8 +160,7 @@ void callback(char *topic, byte *payloadRaw, unsigned int length) {
   auto rc = deserializeJson(doc, json);
   assert(rc == DeserializationError::Ok);
 
-  reading_t reading{.sensor = doc["sen"].as<String>(),
-                    .location = doc["loc"].as<String>(),
+  reading_t reading{.sensor = strSensor,
                     .temperature = doc["temp"].as<float>(),
                     .humidity = doc["hum"].as<float>()};
   xQueueOverwrite(qhReading, &reading);
@@ -191,8 +173,8 @@ TaskHandle_t brightnessTaskHandle;
 void handleLongPressStart(void *param) {
   if (!brightnessTaskHandle) {
     BaseType_t rc =
-        xTaskCreatePinnedToCore(changeBrightnessTask, "brightness", 2400, param,
-                                1, &brightnessTaskHandle, 1);
+        xTaskCreatePinnedToCore(changeBrightnessTask, "displayBrightness", 2400,
+                                param, 1, &brightnessTaskHandle, 1);
     assert(rc == pdPASS);
   }
 }
@@ -207,16 +189,12 @@ void handleLongPressStop() {
 } // namespace
 
 void setup() {
-  BaseType_t rc;
-
-  app_cpu = xPortGetCoreID();
+  Serial.begin(115200);
 
   semDisplay = xSemaphoreCreateBinary();
   assert(semDisplay);
 
   qhReading = xQueueCreate(1, sizeof(reading_t));
-
-  Serial.begin(115200);
 
   // Enable battery
   pinMode(15, OUTPUT);
@@ -235,12 +213,13 @@ void setup() {
   tft.init();
   tft.fillScreen(TFT_WHITE);
   tft.setRotation(1);
+  std::swap(displayHeight, displayWidth);
   tft.setSwapBytes(true);
 
-  // Set initial TFT brightness
+  // Set initial TFT displayBrightness
   ledcSetup(0, 10000, 8);
   ledcAttachPin(38, 0);
-  ledcWrite(0, brightness);
+  ledcWrite(0, displayBrightness);
 
   tft.pushImage(16, 8, 32, 64, thermometer);
   tft.pushImage(160, 12, 32, 40, humidity);
@@ -258,23 +237,24 @@ void setup() {
   // Get system time from NTP server
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
-  // Connect to MQTT server
-  client.setServer(mqttServer, MQTT_PORT);
-  client.setCallback(callback);
+  // Configure MQTT server connection
+  pubSubClient.setServer(mqttServer, MQTT_PORT);
+  pubSubClient.setCallback(callback);
 
-  rc = xTaskCreatePinnedToCore(displayTask, "display", 2000, nullptr, 1,
-                               nullptr, app_cpu);
+  auto rc = xTaskCreatePinnedToCore(displayTask, "display", 3096, nullptr, 1,
+                                    nullptr, 1);
   assert(rc == pdPASS);
 }
 
 void loop() {
-  if (!client.connected()) {
+  if (!pubSubClient.connected()) {
     reconnect();
   }
 
-  client.loop();
+  pubSubClient.loop();
   lowerButton.tick();
   upperButton.tick();
 
-  taskYIELD();
+  // Give idle task some execution time
+  delay(1);
 }
