@@ -1,5 +1,5 @@
 #include "ArduinoJson.h"
-#include "data.h"
+#include "DataManager.h"
 #include "display.h"
 #include "pin_config.h"
 #include "secrets.h"
@@ -19,8 +19,7 @@
 #define MAX_SAMPLES 240
 
 // externals
-QueueHandle_t qhReading = nullptr;
-uint32_t updateCounter = 0;
+uint32_t updateCounter;
 
 namespace {
 
@@ -35,6 +34,8 @@ const int daylightOffset_sec = 3600 * 1;
 auto wifiClient = WiFiClient();
 auto pubSubClient = PubSubClient(wifiClient);
 
+auto dataManager = DataManager{};
+
 auto lowerButton = OneButton(LOWER_BUTTON_PIN);
 auto upperButton = OneButton(UPPER_BUTTON_PIN);
 
@@ -42,7 +43,7 @@ void reconnect() {
   while (WiFi.status() != WL_CONNECTED) {
     WiFi.disconnect();
     WiFi.reconnect();
-    delay(10000);
+    delay(5000);
   }
 
   // Loop until we're reconnected
@@ -82,12 +83,14 @@ void handleLongPressStop() {
   }
 }
 
+void mqttCallback(char *topic, byte *payloadRaw, unsigned int length) {
+  dataManager.mttqUpdate(topic, payloadRaw, length);
+}
+
 } // namespace
 
 void setup() {
   Serial.begin(115200);
-
-  qhReading = xQueueCreate(1, sizeof(reading_t));
 
   // Enable battery
   pinMode(15, OUTPUT);
@@ -121,8 +124,9 @@ void setup() {
   pubSubClient.setServer(mqttServer, MQTT_PORT);
   pubSubClient.setCallback(mqttCallback);
 
-  auto rc = xTaskCreatePinnedToCore(displayTask, "display", 3096, nullptr, 1,
-                                    nullptr, 1);
+  auto rc =
+      xTaskCreatePinnedToCore(displayTask, "display", 3096,
+                              static_cast<void *>(&dataManager), 1, nullptr, 1);
   assert(rc == pdPASS);
 }
 

@@ -1,5 +1,5 @@
 #include "display.h"
-#include "data.h"
+#include "DataManager.h"
 #include "humidity.h"
 #include "pin_config.h"
 #include "thermometer.h"
@@ -43,58 +43,59 @@ void changeBrightnessTask(void *param) {
   }
 }
 
-void displayTask(void *argp) {
-  reading_t reading;
+void displayTask(void *pvParameters) {
+  auto *dataManager = static_cast<DataManager *>(pvParameters);
   UBaseType_t hwmStack = 0;
   uint32_t freeHeapSize = 0;
 
   auto ticktime = xTaskGetTickCount();
 
   for (;;) {
-    auto rc = xQueuePeek(qhReading, &reading, 0);
-    if (rc == pdPASS) {
-      auto strTemperature = String(reading.temperature, 1) + "°C";
+    dataManager->requestAccess();
+    const auto &stats = dataManager->getCurrentStats();
+    auto strTemperature = String(stats.temperature, 1) + "°C";
 
-      tempSprite.createSprite(90, 26);
-      tempSprite.fillSprite(backgroundColor);
-      tempSprite.loadFont(digits);
-      tempSprite.setTextColor(TFT_BLACK, backgroundColor);
-      tempSprite.drawString(strTemperature, 0, 0, 4);
-      tempSprite.pushSprite(56, 22);
+    tempSprite.createSprite(90, 26);
+    tempSprite.fillSprite(backgroundColor);
+    tempSprite.loadFont(digits);
+    tempSprite.setTextColor(TFT_BLACK, backgroundColor);
+    tempSprite.drawString(strTemperature, 0, 0, 4);
+    tempSprite.pushSprite(56, 22);
 
-      auto strHumidity = String(reading.humidity, 0) + "%";
+    auto strHumidity = String(stats.humidity, 0) + "%";
 
-      humSprite.createSprite(60, 26);
-      humSprite.fillSprite(backgroundColor);
-      humSprite.loadFont(digits);
-      humSprite.setTextColor(TFT_BLACK, backgroundColor);
-      humSprite.drawString(strHumidity, 0, 0, 4);
-      humSprite.pushSprite(198, 22);
+    humSprite.createSprite(60, 26);
+    humSprite.fillSprite(backgroundColor);
+    humSprite.loadFont(digits);
+    humSprite.setTextColor(TFT_BLACK, backgroundColor);
+    humSprite.drawString(strHumidity, 0, 0, 4);
+    humSprite.pushSprite(198, 22);
 
-      detailsSprite.createSprite(displayWidth, 80);
-      detailsSprite.fillSprite(TFT_DARKGREY);
-      detailsSprite.loadFont(small);
-      detailsSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
+    detailsSprite.createSprite(displayWidth, 80);
+    detailsSprite.fillSprite(TFT_DARKGREY);
+    detailsSprite.loadFont(small);
+    detailsSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
 
-      int32_t y = 4;
-      auto strLocation = "Location: " + reading.location;
-      detailsSprite.drawString(strLocation, 4, y);
+    int32_t y = 4;
+    auto strLocation = "Location: " + stats.sensorLocation;
+    detailsSprite.drawString(strLocation, 4, y);
 
-      y += 17;
-      auto strCounter = "Counter: " + String(updateCounter++);
-      detailsSprite.drawString(strCounter, 4, y);
+    y += 17;
+    auto strCounter = "Counter: " + String(updateCounter++);
+    detailsSprite.drawString(strCounter, 4, y);
 
-      y += 17;
-      auto strMinMax = "MIN: " + String(reading.minTemperature, 1);
-      strMinMax += "°C, MAX: " + String(reading.maxTemperature, 1) + "°C";
-      detailsSprite.drawString(strMinMax, 4, y);
+    y += 17;
+    auto strMinMax = "MIN: " + String(stats.minTemperature, 1);
+    strMinMax += "°C, MAX: " + String(stats.maxTemperature, 1) + "°C";
+    detailsSprite.drawString(strMinMax, 4, y);
 
-      auto battery_mv = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
-      y += 17;
-      auto strBattery = "Battery: " + String(battery_mv / 1000., 2) + "V";
-      detailsSprite.drawString(strBattery, 4, y);
-      detailsSprite.pushSprite(0, displayHeight - 80);
-    }
+    auto battery_mv = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
+    y += 17;
+    auto strBattery = "Battery: " + String(battery_mv / 1000., 2) + "V";
+    detailsSprite.drawString(strBattery, 4, y);
+    detailsSprite.pushSprite(0, displayHeight - 80);
+
+    dataManager->releaseAccess();
 
     vTaskDelayUntil(&ticktime, 1000);
   }
