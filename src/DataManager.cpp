@@ -9,7 +9,7 @@ extern uint32_t updateCounter;
 
 DataManager::DataManager() : sem_{xSemaphoreCreateBinary()}, sensorIndex_{-1} {}
 
-void DataManager::mttqUpdate(char *topic, byte *payloadRaw,
+void DataManager::mqttUpdate(char *topic, byte *payloadRaw,
                              unsigned int length) {
   Serial.print("[");
   Serial.print(topic);

@@ -1,4 +1,5 @@
 #include "ArduinoJson.h"
+#include "Controller.h"
 #include "DataManager.h"
 #include "display.h"
 #include "pin_config.h"
@@ -36,18 +37,28 @@ auto pubSubClient = PubSubClient(wifiClient);
 
 auto dataManager = DataManager{};
 
-auto lowerButton = OneButton(LOWER_BUTTON_PIN);
-auto upperButton = OneButton(UPPER_BUTTON_PIN);
+auto controller = Controller{};
 
 void reconnect() {
-  while (WiFi.status() != WL_CONNECTED) {
-    WiFi.disconnect();
-    WiFi.reconnect();
-    delay(5000);
-  }
+  int retries = 0;
 
   // Loop until we're reconnected
   while (!pubSubClient.connected()) {
+
+    if (retries > 2) {
+      // Try and reconnected to WiFi if reconnecting to
+      // MQTT server keeps failing
+      WiFi.disconnect();
+      WiFi.begin(ssid, password);
+
+      while (WiFi.status() != WL_CONNECTED) {
+        log_d("WiFi not connected");
+        delay(500);
+      }
+
+      log_i("WiFi reconnected: %s", WiFi.localIP().toString().c_str());
+    }
+
     log_d("Attempting MQTT connection...");
     // Create a random pubSubClient ID
     String clientId = "esp32client-" + String(random(0xffff), HEX);
@@ -60,31 +71,13 @@ void reconnect() {
       log_e("Could not connect to MQTT server, rc=%d", pubSubClient.state());
       delay(5000);
     }
-  }
-}
 
-void handleLowerClick() { log_d("Lower button pressed"); }
-
-TaskHandle_t brightnessTaskHandle;
-
-void handleLongPressStart(void *param) {
-  if (!brightnessTaskHandle) {
-    BaseType_t rc =
-        xTaskCreatePinnedToCore(changeBrightnessTask, "displayBrightness", 2400,
-                                param, 1, &brightnessTaskHandle, 1);
-    assert(rc == pdPASS);
-  }
-}
-
-void handleLongPressStop() {
-  if (brightnessTaskHandle) {
-    vTaskDelete(brightnessTaskHandle);
-    brightnessTaskHandle = nullptr;
+    retries++;
   }
 }
 
 void mqttCallback(char *topic, byte *payloadRaw, unsigned int length) {
-  dataManager.mttqUpdate(topic, payloadRaw, length);
+  dataManager.mqttUpdate(topic, payloadRaw, length);
 }
 
 } // namespace
@@ -95,16 +88,6 @@ void setup() {
   // Enable battery
   pinMode(15, OUTPUT);
   digitalWrite(15, HIGH);
-
-  lowerButton.attachClick(handleLowerClick);
-
-  lowerButton.attachLongPressStart(handleLongPressStart,
-                                   (void *)LOWER_BUTTON_PIN);
-  lowerButton.attachLongPressStop(handleLongPressStop);
-
-  upperButton.attachLongPressStart(handleLongPressStart,
-                                   (void *)UPPER_BUTTON_PIN);
-  upperButton.attachLongPressStop(handleLongPressStop);
 
   initDisplay();
 
@@ -124,9 +107,14 @@ void setup() {
   pubSubClient.setServer(mqttServer, MQTT_PORT);
   pubSubClient.setCallback(mqttCallback);
 
-  auto rc =
-      xTaskCreatePinnedToCore(displayTask, "display", 3096,
-                              static_cast<void *>(&dataManager), 1, nullptr, 1);
+  auto rc = xTaskCreatePinnedToCore(
+      +[](void *param) { controller.controllerTask(param); }, "controller",
+      2048, nullptr, 1, nullptr, 1);
+  assert(rc == pdPASS);
+
+  auto pvDataManager = static_cast<void *>(&dataManager);
+  rc = xTaskCreatePinnedToCore(displayTask, "display", 3096, pvDataManager, 1,
+                               nullptr, 1);
   assert(rc == pdPASS);
 }
 
@@ -136,8 +124,6 @@ void loop() {
   }
 
   pubSubClient.loop();
-  lowerButton.tick();
-  upperButton.tick();
 
   // Give idle task some execution time
   delay(1);

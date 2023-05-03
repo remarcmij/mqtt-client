@@ -29,7 +29,7 @@ struct sensorStats_t {
 class DataManager {
 public:
   DataManager();
-  void mttqUpdate(char *topic, byte *payloadRaw, unsigned int length);
+  void mqttUpdate(char *topic, byte *payloadRaw, unsigned int length);
   const sensorStats_t &getCurrentStats();
   void requestAccess();
   void releaseAccess();

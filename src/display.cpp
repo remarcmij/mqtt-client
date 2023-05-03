@@ -15,6 +15,8 @@
 extern QueueHandle_t qhReading;
 extern uint32_t updateCounter;
 
+TaskHandle_t brightnessTaskHandle;
+
 namespace {
 auto tft = TFT_eSPI();
 auto tempSprite = TFT_eSprite(&tft);
@@ -27,6 +29,22 @@ uint32_t displayHeight = TFT_HEIGHT;
 uint32_t displayWidth = TFT_WIDTH;
 uint32_t displayBrightness = 50;
 } // namespace
+
+void handleLongPressStart(void *param) {
+  if (!brightnessTaskHandle) {
+    BaseType_t rc =
+        xTaskCreatePinnedToCore(changeBrightnessTask, "displayBrightness", 2400,
+                                param, 1, &brightnessTaskHandle, 1);
+    assert(rc == pdPASS);
+  }
+}
+
+void handleLongPressStop() {
+  if (brightnessTaskHandle) {
+    vTaskDelete(brightnessTaskHandle);
+    brightnessTaskHandle = nullptr;
+  }
+}
 
 void changeBrightnessTask(void *param) {
   auto buttonPin = reinterpret_cast<unsigned>(param);
