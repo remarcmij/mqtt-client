@@ -89,7 +89,7 @@ void setup() {
   pinMode(15, OUTPUT);
   digitalWrite(15, HIGH);
 
-  initDisplay();
+  Display::init();
 
   WiFi.begin(ssid, password);
 
@@ -109,12 +109,13 @@ void setup() {
 
   auto rc = xTaskCreatePinnedToCore(
       +[](void *param) { controller.controllerTask(param); }, "controller",
-      2048, nullptr, 1, nullptr, 1);
+      4096, nullptr, 1, nullptr, 1);
   assert(rc == pdPASS);
 
   auto pvDataManager = static_cast<void *>(&dataManager);
-  rc = xTaskCreatePinnedToCore(displayTask, "display", 3096, pvDataManager, 1,
-                               nullptr, 1);
+  rc = xTaskCreatePinnedToCore(
+      +[](void *param) { Display::displayTask(param); }, "display", 4096,
+      pvDataManager, 1, nullptr, 1);
   assert(rc == pdPASS);
 }
 

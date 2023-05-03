@@ -17,8 +17,9 @@ extern uint32_t updateCounter;
 
 TaskHandle_t brightnessTaskHandle;
 
-namespace {
+namespace Display {
 auto tft = TFT_eSPI();
+auto displaySprite = TFT_eSprite(&tft);
 auto tempSprite = TFT_eSprite(&tft);
 auto humSprite = TFT_eSprite(&tft);
 auto detailsSprite = TFT_eSprite(&tft);
@@ -28,7 +29,6 @@ const uint32_t backgroundColor = TFT_WHITE;
 uint32_t displayHeight = TFT_HEIGHT;
 uint32_t displayWidth = TFT_WIDTH;
 uint32_t displayBrightness = 50;
-} // namespace
 
 void handleLongPressStart(void *param) {
   if (!brightnessTaskHandle) {
@@ -73,12 +73,18 @@ void displayTask(void *pvParameters) {
     const auto &stats = dataManager->getCurrentStats();
     auto strTemperature = String(stats.temperature, 1) + "°C";
 
+    displaySprite.createSprite(displayWidth, displayHeight);
+    displaySprite.fillSprite(TFT_WHITE);
+
+    displaySprite.pushImage(16, 8, 32, 64, thermometer);
+    displaySprite.pushImage(160, 12, 32, 40, humidity);
+
     tempSprite.createSprite(90, 26);
     tempSprite.fillSprite(backgroundColor);
     tempSprite.loadFont(digits);
     tempSprite.setTextColor(TFT_BLACK, backgroundColor);
     tempSprite.drawString(strTemperature, 0, 0, 4);
-    tempSprite.pushSprite(56, 22);
+    tempSprite.pushToSprite(&displaySprite, 56, 22);
 
     auto strHumidity = String(stats.humidity, 0) + "%";
 
@@ -87,7 +93,7 @@ void displayTask(void *pvParameters) {
     humSprite.loadFont(digits);
     humSprite.setTextColor(TFT_BLACK, backgroundColor);
     humSprite.drawString(strHumidity, 0, 0, 4);
-    humSprite.pushSprite(198, 22);
+    humSprite.pushToSprite(&displaySprite, 198, 22);
 
     detailsSprite.createSprite(displayWidth, 80);
     detailsSprite.fillSprite(TFT_DARKGREY);
@@ -111,7 +117,9 @@ void displayTask(void *pvParameters) {
     y += 17;
     auto strBattery = "Battery: " + String(battery_mv / 1000., 2) + "V";
     detailsSprite.drawString(strBattery, 4, y);
-    detailsSprite.pushSprite(0, displayHeight - 80);
+    detailsSprite.pushToSprite(&displaySprite, 0, displayHeight - 80);
+
+    displaySprite.pushSprite(0, 0);
 
     dataManager->releaseAccess();
 
@@ -119,18 +127,16 @@ void displayTask(void *pvParameters) {
   }
 }
 
-void initDisplay() {
+void init() {
   tft.init();
   tft.fillScreen(TFT_WHITE);
   tft.setRotation(1);
-  std::swap(displayHeight, displayWidth);
+  std::swap(displayWidth, displayHeight);
   tft.setSwapBytes(true);
 
   // Set initial TFT displayBrightness
   ledcSetup(0, 10000, 8);
   ledcAttachPin(38, 0);
   ledcWrite(0, displayBrightness);
-
-  tft.pushImage(16, 8, 32, 64, thermometer);
-  tft.pushImage(160, 12, 32, 40, humidity);
 }
+} // namespace Display

@@ -1,28 +1,24 @@
 #include "Controller.h"
 #include "display.h"
 #include "pin_config.h"
-#include "util.h"
 
-static BaseType_t stack_hwm{};
-
-Controller::Controller(void *param)
+Controller::Controller()
     : lowerButton_{OneButton(LOWER_BUTTON_PIN)}, upperButton_{OneButton(
                                                      UPPER_BUTTON_PIN)} {
 
-  lowerButton_.attachLongPressStart(handleLongPressStart,
+  lowerButton_.attachLongPressStart(Display::handleLongPressStart,
                                     (void *)LOWER_BUTTON_PIN);
-  lowerButton_.attachLongPressStop(handleLongPressStop);
+  lowerButton_.attachLongPressStop(Display::handleLongPressStop);
 
-  upperButton_.attachLongPressStart(handleLongPressStart,
+  upperButton_.attachLongPressStart(Display::handleLongPressStart,
                                     (void *)UPPER_BUTTON_PIN);
-  upperButton_.attachLongPressStop(handleLongPressStop);
+  upperButton_.attachLongPressStop(Display::handleLongPressStop);
 };
 
-void Controller::controllerTask() {
+void Controller::controllerTask(void *param) {
   for (;;) {
     lowerButton_.tick();
     upperButton_.tick();
-    stack_hwm = reportStackUsage(stack_hwm);
     taskYIELD();
   }
 }
