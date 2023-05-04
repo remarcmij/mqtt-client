@@ -1,6 +1,7 @@
 #include "ArduinoJson.h"
 #include "Controller.h"
 #include "DataManager.h"
+#include "View.h"
 #include "display.h"
 #include "pin_config.h"
 #include "secrets.h"
@@ -11,6 +12,7 @@
 #include <time.h>
 #include <utility>
 
+
 #include "Calibri32.h"
 #include "NotoSansBold15.h"
 #define digits Calibri32
@@ -18,9 +20,6 @@
 
 #define MQTT_PORT 1883
 #define MAX_SAMPLES 240
-
-// externals
-uint32_t updateCounter;
 
 namespace {
 
@@ -36,7 +35,7 @@ auto wifiClient = WiFiClient();
 auto pubSubClient = PubSubClient(wifiClient);
 
 auto dataManager = DataManager{};
-
+auto view = View(TFT_WIDTH, TFT_HEIGHT);
 auto controller = Controller{};
 
 void reconnect() {
@@ -89,7 +88,7 @@ void setup() {
   pinMode(15, OUTPUT);
   digitalWrite(15, HIGH);
 
-  Display::init();
+  view.init();
 
   WiFi.begin(ssid, password);
 
@@ -114,7 +113,7 @@ void setup() {
 
   auto pvDataManager = static_cast<void *>(&dataManager);
   rc = xTaskCreatePinnedToCore(
-      +[](void *param) { Display::displayTask(param); }, "display", 4096,
+      +[](void *param) { view.updateTask(param); }, "display", 4096,
       pvDataManager, 1, nullptr, 1);
   assert(rc == pdPASS);
 }

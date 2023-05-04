@@ -1,4 +1,5 @@
 #pragma once
+#include "IView.h"
 #include <Arduino.h>
 #include <list>
 #include <vector>
@@ -10,7 +11,14 @@ struct datapoint_t {
 };
 
 struct sensorStats_t {
-  // Share with displayTask
+  String sensorTypeName;
+  String sensorLocation;
+  std::list<datapoint_t> datapoints;
+  std::array<datapoint_t, 6> samples_;
+  size_t sampleCount_;
+};
+
+struct ViewModel {
   String sensorTypeName;
   String sensorLocation;
   float temperature;
@@ -19,23 +27,19 @@ struct sensorStats_t {
   float humidity;
   float minHumidity;
   float maxHumidity;
-  std::list<datapoint_t> datapoints;
-
-  // private to DataManager
-  size_t sampleCount_;
-  std::array<datapoint_t, 6> samples_;
+  std::vector<datapoint_t> datapoints;
 };
+
+typedef void (*displayCallback_t)(const ViewModel &viewModel);
 
 class DataManager {
 public:
   DataManager();
+  void setView(IView *view);
   void mqttUpdate(char *topic, byte *payloadRaw, unsigned int length);
-  const sensorStats_t &getCurrentStats();
-  void requestAccess();
-  void releaseAccess();
 
 private:
-  SemaphoreHandle_t sem_;
+  IView *view_;
   volatile int sensorIndex_;
   std::vector<sensorStats_t> sensorStats_{};
 };
