@@ -1,7 +1,7 @@
 #pragma once
 #include "IView.h"
 #include <Arduino.h>
-#include <list>
+#include <deque>
 #include <vector>
 
 struct datapoint_t {
@@ -13,9 +13,8 @@ struct datapoint_t {
 struct sensorStats_t {
   String sensorTypeName;
   String sensorLocation;
-  std::list<datapoint_t> datapoints;
-  std::array<datapoint_t, 6> samples_;
-  size_t sampleCount_;
+  std::deque<datapoint_t> samples_;
+  std::deque<datapoint_t> datapoints;
 };
 
 struct ViewModel {
@@ -27,19 +26,19 @@ struct ViewModel {
   float humidity;
   float minHumidity;
   float maxHumidity;
-  std::vector<datapoint_t> datapoints;
+  std::deque<datapoint_t> *datapoints;
 };
 
 typedef void (*displayCallback_t)(const ViewModel &viewModel);
 
-class DataManager {
+class DataModel {
 public:
-  DataManager();
   void setView(IView *view);
   void mqttUpdate(char *topic, byte *payloadRaw, unsigned int length);
 
 private:
   IView *view_;
-  volatile int sensorIndex_;
+  volatile int sensorIndex_{-1};
+  uint16_t sampleCount_{0};
   std::vector<sensorStats_t> sensorStats_{};
 };

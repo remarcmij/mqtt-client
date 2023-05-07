@@ -1,16 +1,14 @@
-#include "DataManager.h"
+#include "DataModel.h"
 #include "ArduinoJson.h"
 #include <algorithm>
 #include <optional>
 
-#define MAX_DATAPOINTS 240 // Covers 24 hours
+#define MAX_DATAPOINTS 300
+#define SAMPLE_SIZE 6
 
-DataManager::DataManager() : sensorIndex_{-1} {}
+void DataModel::setView(IView *view) { view_ = view; }
 
-void DataManager::setView(IView *view) { view_ = view; }
-
-void DataManager::mqttUpdate(char *topic, byte *payloadRaw,
-                             unsigned int length) {
+void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   Serial.print("[");
   Serial.print(topic);
   Serial.print("] ");
@@ -60,13 +58,7 @@ void DataManager::mqttUpdate(char *topic, byte *payloadRaw,
     stats = optStats.value();
   }
 
-  datapoint_t sensorSample{.timestamp = time(nullptr),
-                           .temperature = temperature,
-                           .humidity = humidity};
-
-  auto samplesSize = stats->samples_.size();
-
-  if (stats->sampleCount_ >= samplesSize) {
+  if (sampleCount_ == SAMPLE_SIZE) {
     // Compute average temperature and humidity for
     // the last 6 samples (= last 6 minutes)
     float temperatureTotal{};
@@ -75,8 +67,8 @@ void DataManager::mqttUpdate(char *topic, byte *payloadRaw,
       temperatureTotal += sample.temperature;
       humidityTotal += sample.humidity;
     }
-    float temperatureAvg = temperatureTotal / samplesSize;
-    float humidityAvg = humidityTotal / samplesSize;
+    float temperatureAvg = temperatureTotal / stats->samples_.size();
+    float humidityAvg = humidityTotal / stats->samples_.size();
 
     log_d("average temperature: %.1f", temperatureAvg);
     log_d("average sample humidity: %.0f", humidityAvg);
@@ -89,12 +81,18 @@ void DataManager::mqttUpdate(char *topic, byte *payloadRaw,
     if (stats->datapoints.size() > MAX_DATAPOINTS) {
       stats->datapoints.pop_front();
     }
-
-    stats->sampleCount_ = 0;
+    sampleCount_ = 0;
   }
 
-  stats->samples_[stats->sampleCount_] = sensorSample;
-  stats->sampleCount_ += 1;
+  datapoint_t sensorSample{.timestamp = time(nullptr),
+                           .temperature = temperature,
+                           .humidity = humidity};
+
+  stats->samples_.push_back(sensorSample);
+  sampleCount_++;
+  if (stats->samples_.size() > SAMPLE_SIZE * 4) {
+    stats->samples_.pop_front();
+  }
 
   ViewModel viewModel{};
   viewModel.sensorTypeName = stats->sensorTypeName;
@@ -103,8 +101,7 @@ void DataManager::mqttUpdate(char *topic, byte *payloadRaw,
       temperature;
   viewModel.humidity = viewModel.minHumidity = viewModel.maxHumidity = humidity;
 
-  for (int i = 0; i < stats->sampleCount_; i++) {
-    const auto &sample = stats->samples_[i];
+  for (const auto &sample : stats->samples_) {
     viewModel.minTemperature =
         std::min(viewModel.minTemperature, sample.temperature);
     viewModel.maxTemperature =
@@ -122,19 +119,11 @@ void DataManager::mqttUpdate(char *topic, byte *payloadRaw,
     viewModel.maxHumidity = std::max(viewModel.maxHumidity, datapoint.humidity);
   }
 
-  viewModel.datapoints.reserve(viewModel.datapoints.size());
-
-  // Trying this causes an exception
-  // std::copy(stats->datapoints.begin(), stats->datapoints.end(),
-  //           viewModel.datapoints.begin());
-
-  for (const auto &datapoint : stats->datapoints) {
-    viewModel.datapoints.push_back(datapoint);
-  }
+  viewModel.datapoints = &stats->datapoints;
 
   view_->update(viewModel);
 
-  log_d("sample count: %u", stats->sampleCount_);
-  log_d("vector size: %u", sensorStats_.size());
+  log_d("sample count: %u", sampleCount_);
+  log_d("sensor count: %u", sensorStats_.size());
   log_d("sensorStats count: %u", stats->datapoints.size());
 }

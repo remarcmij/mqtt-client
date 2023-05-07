@@ -1,8 +1,8 @@
 #include "ArduinoJson.h"
 #include "Controller.h"
-#include "DataManager.h"
+#include "DataModel.h"
 #include "View.h"
-#include "display.h"
+#include "backlight.h"
 #include "pin_config.h"
 #include "secrets.h"
 #include <Arduino.h>
@@ -11,7 +11,6 @@
 #include <WiFi.h>
 #include <time.h>
 #include <utility>
-
 
 #include "Calibri32.h"
 #include "NotoSansBold15.h"
@@ -31,12 +30,23 @@ const char *ntpServer = "time.google.com";
 const long gmtOffset_sec = 3600 * 1;
 const int daylightOffset_sec = 3600 * 1;
 
-auto wifiClient = WiFiClient();
-auto pubSubClient = PubSubClient(wifiClient);
-
-auto dataManager = DataManager{};
-auto view = View(TFT_WIDTH, TFT_HEIGHT);
+auto wifiClient = WiFiClient{};
+auto pubSubClient = PubSubClient{wifiClient};
+auto dataModel = DataModel{};
+auto view = View{TFT_WIDTH, TFT_HEIGHT};
 auto controller = Controller{};
+
+void nextPage() { view.nextPage(); }
+
+button_handlers_t buttonEventHandlers = {
+    .io14_handleClick = nullptr,
+    .io14_handleDoubleClick = nullptr,
+    .io14_handleLongPressStart = Backlight::startDecreaseBrightness,
+    .io14_handleLongPressStop = Backlight::stopDecreaseBrightness,
+    .boot_handleClick = nextPage,
+    .boot_handleDoubleClick = nullptr,
+    .boot_handleLongPressStart = Backlight::startIncreaseBrightness,
+    .boot_handleLongPressStop = Backlight::stopDecreaseBrightness};
 
 void reconnect() {
   int retries = 0;
@@ -76,7 +86,7 @@ void reconnect() {
 }
 
 void mqttCallback(char *topic, byte *payloadRaw, unsigned int length) {
-  dataManager.mqttUpdate(topic, payloadRaw, length);
+  dataModel.mqttUpdate(topic, payloadRaw, length);
 }
 
 } // namespace
@@ -89,6 +99,9 @@ void setup() {
   digitalWrite(15, HIGH);
 
   view.init();
+  Backlight::init();
+
+  controller.setHandlers(buttonEventHandlers);
 
   WiFi.begin(ssid, password);
 
@@ -111,9 +124,9 @@ void setup() {
       4096, nullptr, 1, nullptr, 1);
   assert(rc == pdPASS);
 
-  auto pvDataManager = static_cast<void *>(&dataManager);
+  auto pvDataManager = static_cast<void *>(&dataModel);
   rc = xTaskCreatePinnedToCore(
-      +[](void *param) { view.updateTask(param); }, "display", 4096,
+      +[](void *param) { view.updateTask(param); }, "display", 6144,
       pvDataManager, 1, nullptr, 1);
   assert(rc == pdPASS);
 }

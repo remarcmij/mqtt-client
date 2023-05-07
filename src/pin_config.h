@@ -1,3 +1,3 @@
 #pragma once
-#define UPPER_BUTTON_PIN 14
-#define LOWER_BUTTON_PIN 0
+#define IO14_BUTTON_PIN 14
+#define BOOT_BUTTON_PIN 0
