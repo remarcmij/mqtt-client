@@ -1,4 +1,5 @@
 #pragma once
+#include "DataModel.h"
 #include "IView.h"
 #include <Arduino.h>
 #include <TFT_eSPI.h>
@@ -17,10 +18,11 @@ private:
   uint32_t width_;
   uint32_t height_;
   TFT_eSPI tft_;
-  QueueHandle_t qhViewModel_;
+  SemaphoreHandle_t mutex_;
   uint32_t updateCounter_{0};
   uint32_t pageIndex_{0};
+  ViewModel viewModel_;
 
-  void renderMainPage_(const ViewModel &viewModel);
-  void renderGraphPage_(const ViewModel &viewModel, GraphType graphType);
+  void renderMainPage_(const ViewModel &vm);
+  void renderGraphPage_(const ViewModel &vm, GraphType graphType);
 };

@@ -3,9 +3,6 @@
 #include <algorithm>
 #include <optional>
 
-#define MAX_DATAPOINTS 300
-#define SAMPLE_SIZE 6
-
 void DataModel::setView(IView *view) { view_ = view; }
 
 void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
@@ -58,12 +55,12 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
     stats = optStats.value();
   }
 
-  if (sampleCount_ == SAMPLE_SIZE) {
+  if (sampleCount_ == SAMPLES_PER_DATAPOINT) {
     // Compute average temperature and humidity for
     // the last 6 samples (= last 6 minutes)
     float temperatureTotal{};
     float humidityTotal{};
-    for (auto &sample : stats->samples_) {
+    for (const auto &sample : stats->samples_) {
       temperatureTotal += sample.temperature;
       humidityTotal += sample.humidity;
     }
@@ -73,57 +70,49 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
     log_d("average temperature: %.1f", temperatureAvg);
     log_d("average sample humidity: %.0f", humidityAvg);
 
-    datapoint_t datapoint{.timestamp = stats->samples_[0].timestamp,
-                          .temperature = temperatureAvg,
-                          .humidity = humidityAvg};
+    datapoint_t dp{.temperature = temperatureAvg, .humidity = humidityAvg};
 
-    stats->datapoints.push_back(datapoint);
+    stats->datapoints.push_back(dp);
     if (stats->datapoints.size() > MAX_DATAPOINTS) {
       stats->datapoints.pop_front();
     }
     sampleCount_ = 0;
   }
 
-  datapoint_t sensorSample{.timestamp = time(nullptr),
-                           .temperature = temperature,
-                           .humidity = humidity};
+  datapoint_t sensorSample{.temperature = temperature, .humidity = humidity};
 
   stats->samples_.push_back(sensorSample);
   sampleCount_++;
-  if (stats->samples_.size() > SAMPLE_SIZE * 4) {
+  if (stats->samples_.size() > SAMPLES_PER_DATAPOINT * 2) {
     stats->samples_.pop_front();
   }
 
-  ViewModel viewModel{};
-  viewModel.sensorTypeName = stats->sensorTypeName;
-  viewModel.sensorLocation = stats->sensorLocation;
-  viewModel.temperature = viewModel.minTemperature = viewModel.maxTemperature =
-      temperature;
-  viewModel.humidity = viewModel.minHumidity = viewModel.maxHumidity = humidity;
+  ViewModel vm{};
+  vm.sensorTypeName = stats->sensorTypeName;
+  vm.sensorLocation = stats->sensorLocation;
+  vm.temperature = vm.minTemperature = vm.maxTemperature = temperature;
+  vm.humidity = vm.minHumidity = vm.maxHumidity = humidity;
 
   for (const auto &sample : stats->samples_) {
-    viewModel.minTemperature =
-        std::min(viewModel.minTemperature, sample.temperature);
-    viewModel.maxTemperature =
-        std::max(viewModel.maxTemperature, sample.temperature);
-    viewModel.minHumidity = std::min(viewModel.minHumidity, sample.humidity);
-    viewModel.maxHumidity = std::max(viewModel.maxHumidity, sample.humidity);
+    vm.minTemperature = std::min(vm.minTemperature, sample.temperature);
+    vm.maxTemperature = std::max(vm.maxTemperature, sample.temperature);
+    vm.minHumidity = std::min(vm.minHumidity, sample.humidity);
+    vm.maxHumidity = std::max(vm.maxHumidity, sample.humidity);
   }
 
-  for (const auto &datapoint : stats->datapoints) {
-    viewModel.minTemperature =
-        std::min(viewModel.minTemperature, datapoint.temperature);
-    viewModel.maxTemperature =
-        std::max(viewModel.maxTemperature, datapoint.temperature);
-    viewModel.minHumidity = std::min(viewModel.minHumidity, datapoint.humidity);
-    viewModel.maxHumidity = std::max(viewModel.maxHumidity, datapoint.humidity);
+  for (const auto &dp : stats->datapoints) {
+    vm.minTemperature = std::min(vm.minTemperature, dp.temperature);
+    vm.maxTemperature = std::max(vm.maxTemperature, dp.temperature);
+    vm.minHumidity = std::min(vm.minHumidity, dp.humidity);
+    vm.maxHumidity = std::max(vm.maxHumidity, dp.humidity);
   }
 
-  viewModel.datapoints = &stats->datapoints;
+  for (const auto &dp : stats->datapoints) {
+    vm.datapoints.emplace_back(dp);
+  }
 
-  view_->update(viewModel);
+  view_->update(vm);
 
-  log_d("sample count: %u", sampleCount_);
-  log_d("sensor count: %u", sensorStats_.size());
-  log_d("sensorStats count: %u", stats->datapoints.size());
+  log_d("samples: %u, datapoints: %u, sensors: %u", sampleCount_,
+        stats->datapoints.size(), sensorStats_.size());
 }

@@ -1,4 +1,3 @@
-#include "ArduinoJson.h"
 #include "Controller.h"
 #include "DataModel.h"
 #include "View.h"
@@ -6,16 +5,9 @@
 #include "pin_config.h"
 #include "secrets.h"
 #include <Arduino.h>
-#include <OneButton.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
 #include <time.h>
-#include <utility>
-
-#include "Calibri32.h"
-#include "NotoSansBold15.h"
-#define digits Calibri32
-#define small NotoSansBold15
 
 #define MQTT_PORT 1883
 #define MAX_SAMPLES 240
@@ -49,25 +41,23 @@ button_handlers_t buttonEventHandlers = {
     .boot_handleLongPressStop = Backlight::stopDecreaseBrightness};
 
 void reconnect() {
-  int retries = 0;
-
-  // Loop until we're reconnected
-  while (!pubSubClient.connected()) {
-
-    if (retries > 2) {
-      // Try and reconnected to WiFi if reconnecting to
-      // MQTT server keeps failing
-      WiFi.disconnect();
-      WiFi.begin(ssid, password);
-
-      while (WiFi.status() != WL_CONNECTED) {
-        log_d("WiFi not connected");
-        delay(500);
-      }
-
-      log_i("WiFi reconnected: %s", WiFi.localIP().toString().c_str());
+  while (WiFi.status() != WL_CONNECTED) {
+    uint16_t innerRetry = 0;
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED && innerRetry++ < 4) {
+      log_d("WiFi status retry: %u", innerRetry);
+      delay(500);
     }
+    if (WiFi.status() == WL_CONNECTED) {
+      break;
+    } else {
+      WiFi.disconnect();
+      delay(500);
+    }
+  }
 
+  if (!pubSubClient.connected()) {
     log_d("Attempting MQTT connection...");
     // Create a random pubSubClient ID
     String clientId = "esp32client-" + String(random(0xffff), HEX);
@@ -79,9 +69,8 @@ void reconnect() {
     } else {
       log_e("Could not connect to MQTT server, rc=%d", pubSubClient.state());
       delay(5000);
+      WiFi.disconnect();
     }
-
-    retries++;
   }
 }
 
@@ -103,6 +92,7 @@ void setup() {
 
   controller.setHandlers(buttonEventHandlers);
 
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {

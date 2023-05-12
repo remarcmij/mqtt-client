@@ -4,8 +4,10 @@
 #include <deque>
 #include <vector>
 
+#define SAMPLES_PER_DATAPOINT 4
+#define MAX_DATAPOINTS 300
+
 struct datapoint_t {
-  time_t timestamp;
   float temperature;
   float humidity;
 };
@@ -26,10 +28,10 @@ struct ViewModel {
   float humidity;
   float minHumidity;
   float maxHumidity;
-  std::deque<datapoint_t> *datapoints;
+  std::vector<datapoint_t> datapoints;
 };
 
-typedef void (*displayCallback_t)(const ViewModel &viewModel);
+typedef void (*displayCallback_t)(const sensorStats_t &sensorStats);
 
 class DataModel {
 public:

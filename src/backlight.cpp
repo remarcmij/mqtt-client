@@ -19,7 +19,7 @@ void changeBrightnessTask(void *param) {
   for (;;) {
     brightness += delta;
     ledcWrite(0, brightness);
-    delay(20);
+    delay(100);
   }
 }
 
