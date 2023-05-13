@@ -55,6 +55,14 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
     stats = optStats.value();
   }
 
+  datapoint_t sensorSample{.temperature = temperature, .humidity = humidity};
+
+  stats->samples_.push_back(sensorSample);
+  sampleCount_++;
+  if (stats->samples_.size() > SAMPLES_PER_DATAPOINT * 2) {
+    stats->samples_.pop_front();
+  }
+
   if (sampleCount_ == SAMPLES_PER_DATAPOINT) {
     // Compute average temperature and humidity for
     // the last 6 samples (= last 6 minutes)
@@ -77,14 +85,6 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
       stats->datapoints.pop_front();
     }
     sampleCount_ = 0;
-  }
-
-  datapoint_t sensorSample{.temperature = temperature, .humidity = humidity};
-
-  stats->samples_.push_back(sensorSample);
-  sampleCount_++;
-  if (stats->samples_.size() > SAMPLES_PER_DATAPOINT * 2) {
-    stats->samples_.pop_front();
   }
 
   ViewModel vm{};
