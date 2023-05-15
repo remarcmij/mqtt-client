@@ -1,9 +1,15 @@
 #include "DataModel.h"
 #include "ArduinoJson.h"
 #include <algorithm>
-#include <optional>
 
 void DataModel::setView(IView *view) { view_ = view; }
+
+void DataModel::nextSensor() {
+  if (!sensorStats_.empty()) {
+    sensorIndex_ = (sensorIndex_ + 1) % sensorStats_.size();
+    view_->update();
+  }
+}
 
 void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   Serial.print("[");
@@ -27,92 +33,101 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   assert(pos != -1);
   auto strLocation = strTopic.substring(pos + 1);
 
-  // Find the corresponding sensor stats for the incoming MQTT message
-  std::optional<sensorStats_t *> optStats{};
+  // Find the corresponding sensor pstats for the incoming MQTT message
+  sensorStats_t *pstats{nullptr};
+  int foundIndex = -1;
 
-  for (int i = 0; i < sensorStats_.size(); i++) {
-    auto p = &sensorStats_[i];
-    if (p->sensorLocation == strLocation &&
-        p->sensorTypeName == strSensorTypeName) {
-      optStats = p;
+  int index{0};
+  for (auto &st : sensorStats_) {
+    if (st.sensorLocation == strLocation &&
+        st.sensorTypeName == strSensorTypeName) {
+      pstats = &st;
+      foundIndex = index;
       break;
     }
+    index++;
   }
 
-  sensorStats_t *stats{};
-
-  if (!optStats.has_value()) {
+  if (!pstats) {
     // Create a new entry if not found
-    stats = &sensorStats_.emplace_back();
-    stats->sensorTypeName = strSensorTypeName;
-    stats->sensorLocation = strLocation;
-
-    if (sensorIndex_ == -1) {
-      sensorIndex_ = 0;
-    }
-  } else {
-    // else use the existing entry
-    stats = optStats.value();
+    pstats = &sensorStats_.emplace_back();
+    pstats->sensorTypeName = strSensorTypeName;
+    pstats->sensorLocation = strLocation;
+    foundIndex = sensorStats_.size() - 1;
   }
 
-  datapoint_t sensorSample{.temperature = temperature, .humidity = humidity};
+  xSemaphoreTake(mutex_, portMAX_DELAY);
 
-  stats->samples_.push_back(sensorSample);
-  sampleCount_++;
-  if (stats->samples_.size() > SAMPLES_PER_DATAPOINT * 2) {
-    stats->samples_.pop_front();
-  }
+  pstats->temperature = temperature;
+  pstats->humidity = humidity;
 
-  if (sampleCount_ == SAMPLES_PER_DATAPOINT) {
+  datapoint_t sample{.temperature = temperature, .humidity = humidity};
+
+  pstats->samples.push_back(sample);
+
+  if (pstats->samples.size() == SAMPLES_PER_DATAPOINT) {
     // Compute average temperature and humidity for
     // the last 6 samples (= last 6 minutes)
     float temperatureTotal{};
     float humidityTotal{};
-    for (const auto &sample : stats->samples_) {
+    for (const auto &sample : pstats->samples) {
       temperatureTotal += sample.temperature;
       humidityTotal += sample.humidity;
     }
-    float temperatureAvg = temperatureTotal / stats->samples_.size();
-    float humidityAvg = humidityTotal / stats->samples_.size();
+    float temperatureAvg = temperatureTotal / pstats->samples.size();
+    float humidityAvg = humidityTotal / pstats->samples.size();
 
-    log_d("average temperature: %.1f", temperatureAvg);
-    log_d("average sample humidity: %.0f", humidityAvg);
+    log_d("average temperature: %.2f", temperatureAvg);
+    log_d("average sample humidity: %.2f", humidityAvg);
 
     datapoint_t dp{.temperature = temperatureAvg, .humidity = humidityAvg};
 
-    stats->datapoints.push_back(dp);
-    if (stats->datapoints.size() > MAX_DATAPOINTS) {
-      stats->datapoints.pop_front();
+    pstats->datapoints.push_back(dp);
+    if (pstats->datapoints.size() > MAX_DATAPOINTS) {
+      pstats->datapoints.pop_front();
     }
-    sampleCount_ = 0;
+
+    pstats->samples.clear();
   }
 
-  ViewModel vm{};
-  vm.sensorTypeName = stats->sensorTypeName;
-  vm.sensorLocation = stats->sensorLocation;
-  vm.temperature = vm.minTemperature = vm.maxTemperature = temperature;
-  vm.humidity = vm.minHumidity = vm.maxHumidity = humidity;
+  xSemaphoreGive(mutex_);
 
-  for (const auto &sample : stats->samples_) {
+  if (foundIndex == sensorIndex_) {
+    view_->update();
+  }
+
+  log_d("samples: %u, datapoints: %u, sensors: %u", pstats->samples.size(),
+        pstats->datapoints.size(), sensorStats_.size());
+}
+
+ViewModel DataModel::getViewModel() {
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+
+  const sensorStats_t &stats = sensorStats_[sensorIndex_];
+  ViewModel vm{};
+
+  vm.sensorTypeName = stats.sensorTypeName;
+  vm.sensorLocation = stats.sensorLocation;
+
+  vm.temperature = vm.minTemperature = vm.maxTemperature = stats.temperature;
+  vm.humidity = vm.minHumidity = vm.maxHumidity = stats.humidity;
+
+  for (const auto &sample : stats.samples) {
     vm.minTemperature = std::min(vm.minTemperature, sample.temperature);
     vm.maxTemperature = std::max(vm.maxTemperature, sample.temperature);
     vm.minHumidity = std::min(vm.minHumidity, sample.humidity);
     vm.maxHumidity = std::max(vm.maxHumidity, sample.humidity);
   }
 
-  for (const auto &dp : stats->datapoints) {
+  for (const auto &dp : stats.datapoints) {
+    vm.datapoints.emplace_back(dp);
     vm.minTemperature = std::min(vm.minTemperature, dp.temperature);
     vm.maxTemperature = std::max(vm.maxTemperature, dp.temperature);
     vm.minHumidity = std::min(vm.minHumidity, dp.humidity);
     vm.maxHumidity = std::max(vm.maxHumidity, dp.humidity);
   }
 
-  for (const auto &dp : stats->datapoints) {
-    vm.datapoints.emplace_back(dp);
-  }
+  xSemaphoreGive(mutex_);
 
-  view_->update(vm);
-
-  log_d("samples: %u, datapoints: %u, sensors: %u", sampleCount_,
-        stats->datapoints.size(), sensorStats_.size());
+  return vm;
 }

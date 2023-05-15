@@ -1,8 +1,8 @@
 #pragma once
 
-struct ViewModel;
+struct sensorStats_t;
 
 class IView {
 public:
-  virtual void update(const ViewModel &viewModel) = 0;
+  virtual void update() = 0;
 };

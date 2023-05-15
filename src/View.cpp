@@ -25,11 +25,12 @@ const uint32_t datapointInterval_secs =
 const uint32_t backgroundColor = TFT_WHITE;
 
 /* clang-format off */
-View::View(uint32_t width, uint32_t height) : 
-  width_{width}, height_{height}, 
-  tft_{TFT_eSPI()},
-  mutex_{xSemaphoreCreateMutex()} {
-    // Nothing to do here
+View::View(uint32_t width, uint32_t height, DataModel& dataModel) : 
+  width_{width}, 
+  height_{height}, 
+  dataModel_{dataModel},
+  tft_{TFT_eSPI()} {
+    dataModel.setView(this);
   }
 /* clang-format on */
 
@@ -39,48 +40,47 @@ void View::init() {
   std::swap(width_, height_);
 }
 
-void View::update(const ViewModel &viewModel) {
-  xSemaphoreTake(mutex_, portMAX_DELAY);
-  viewModel_ = viewModel;
-  xSemaphoreGive(mutex_);
+void View::update() {
+  vm_ = dataModel_.getViewModel();
+  render_();
   updateCounter_ = 0;
 }
 
 void View::updateTask(void *param) {
-  auto *dataModel = static_cast<DataModel *>(param);
-  dataModel->setView(this);
-
-  sensorStats_t stats;
-
   auto ticktime = xTaskGetTickCount();
-
   for (;;) {
-    xSemaphoreTake(mutex_, portMAX_DELAY);
-    ViewModel vm = viewModel_;
-    xSemaphoreGive(mutex_);
-
-    switch (pageIndex_) {
-    case 1:
-      renderGraphPage_(vm, GraphType::Temperature);
-      break;
-    case 2:
-      renderGraphPage_(vm, GraphType::Humidity);
-      break;
-    default:
-      renderMainPage_(vm);
-    }
-
+    render_();
     vTaskDelayUntil(&ticktime, 1000);
   }
 }
 
 void View::nextPage() {
-  if (!viewModel_.datapoints.empty()) {
-    pageIndex_ = (pageIndex_ + 1) % NUM_PAGES;
-  }
+  // if (!vm_.datapoints.empty()) {
+  pageIndex_ = (pageIndex_ + 1) % NUM_PAGES;
+  render_();
+  // }
 }
 
-void View::renderMainPage_(const ViewModel &vm) {
+void View::incrementDisconnects() { disconnectCount_++; }
+
+void View::render_() {
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+
+  switch (pageIndex_) {
+  case 1:
+    renderGraphPage_(GraphType::Temperature);
+    break;
+  case 2:
+    renderGraphPage_(GraphType::Humidity);
+    break;
+  default:
+    renderMainPage_();
+  }
+
+  xSemaphoreGive(mutex_);
+}
+
+void View::renderMainPage_() {
   auto displaySprite = TFT_eSprite(&tft_);
   auto detailSprite = TFT_eSprite(&tft_);
 
@@ -89,7 +89,7 @@ void View::renderMainPage_(const ViewModel &vm) {
   displaySprite.fillSprite(TFT_WHITE);
 
   displaySprite.pushImage(16, 8, 32, 64, thermometer);
-  auto strTemperature = String(vm.temperature, 1) + "°C";
+  auto strTemperature = String(vm_.temperature, 1) + "°C";
   // detailSprite.createSprite(90, 26);
   // detailSprite.fillSprite(backgroundColor);
   displaySprite.loadFont(large);
@@ -99,7 +99,7 @@ void View::renderMainPage_(const ViewModel &vm) {
   // detailSprite.deleteSprite();
 
   displaySprite.pushImage(160, 12, 32, 40, humidity);
-  auto strHumidity = String(vm.humidity, 0) + "%";
+  auto strHumidity = String(vm_.humidity, 0) + "%";
   detailSprite.createSprite(60, 26);
   detailSprite.fillSprite(backgroundColor);
   detailSprite.loadFont(large);
@@ -114,16 +114,17 @@ void View::renderMainPage_(const ViewModel &vm) {
   detailSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
 
   int32_t y = 4;
-  auto strLocation = "Location: " + vm.sensorLocation;
+  auto strLocation = "Location: " + vm_.sensorLocation;
   detailSprite.drawString(strLocation, 4, y);
 
   y += 17;
   auto strCounter = "Counter: " + String(updateCounter_++);
+  strCounter += ", Disconnects: " + String(disconnectCount_);
   detailSprite.drawString(strCounter, 4, y);
 
   y += 17;
-  auto strMinMax = "MIN: " + String(vm.minTemperature, 1);
-  strMinMax += "°C, MAX: " + String(vm.maxTemperature, 1) + "°C";
+  auto strMinMax = "MIN: " + String(vm_.minTemperature, 1);
+  strMinMax += "°C, MAX: " + String(vm_.maxTemperature, 1) + "°C";
   detailSprite.drawString(strMinMax, 4, y);
 
   auto battery_mv = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
@@ -136,18 +137,18 @@ void View::renderMainPage_(const ViewModel &vm) {
   displaySprite.pushSprite(0, 0);
 }
 
-void View::renderGraphPage_(const ViewModel &vm, GraphType graphType) {
+void View::renderGraphPage_(GraphType graphType) {
   const float temperatureMargin = 0.5;
   const float humidityMargin = 1.0;
   const int axis_px = 20;
 
   float minValue, maxValue;
   if (graphType == GraphType::Temperature) {
-    minValue = std::floor(vm.minTemperature - temperatureMargin);
-    maxValue = std::ceil(vm.maxTemperature + temperatureMargin);
+    minValue = std::floor(vm_.minTemperature - temperatureMargin);
+    maxValue = std::ceil(vm_.maxTemperature + temperatureMargin);
   } else {
-    minValue = std::floor(vm.minHumidity - humidityMargin);
-    maxValue = std::ceil(vm.maxHumidity + humidityMargin);
+    minValue = std::floor(vm_.minHumidity - humidityMargin);
+    maxValue = std::ceil(vm_.maxHumidity + humidityMargin);
   }
 
   auto valueRange = maxValue - minValue;
@@ -214,7 +215,7 @@ void View::renderGraphPage_(const ViewModel &vm, GraphType graphType) {
 
   x = width_;
   std::for_each(
-      vm.datapoints.rbegin(), vm.datapoints.rend(), [&](const auto &dp) {
+      vm_.datapoints.rbegin(), vm_.datapoints.rend(), [&](const auto &dp) {
         float value =
             graphType == GraphType::Temperature ? dp.temperature : dp.humidity;
         float scaledValue = std::round((value - minValue) * scalingFactor);

@@ -15,7 +15,9 @@ struct datapoint_t {
 struct sensorStats_t {
   String sensorTypeName;
   String sensorLocation;
-  std::deque<datapoint_t> samples_;
+  float temperature;
+  float humidity;
+  std::deque<datapoint_t> samples;
   std::deque<datapoint_t> datapoints;
 };
 
@@ -37,10 +39,12 @@ class DataModel {
 public:
   void setView(IView *view);
   void mqttUpdate(char *topic, byte *payloadRaw, unsigned int length);
+  void nextSensor();
+  ViewModel getViewModel();
 
 private:
   IView *view_;
-  volatile int sensorIndex_{-1};
-  uint16_t sampleCount_{0};
+  int sensorIndex_{0};
   std::vector<sensorStats_t> sensorStats_{};
+  SemaphoreHandle_t mutex_{xSemaphoreCreateMutex()};
 };

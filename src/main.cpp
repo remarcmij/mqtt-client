@@ -7,7 +7,7 @@
 #include <Arduino.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
-#include <time.h>
+#include <stdlib.h>
 
 #define MQTT_PORT 1883
 #define MAX_SAMPLES 240
@@ -19,25 +19,24 @@ const char *password = WIFI_PASSWORD;
 const char *mqttServer = MQTT_SERVER;
 
 const char *ntpServer = "time.google.com";
-const long gmtOffset_sec = 3600 * 1;
-const int daylightOffset_sec = 3600 * 1;
 
 auto wifiClient = WiFiClient{};
 auto pubSubClient = PubSubClient{wifiClient};
 auto dataModel = DataModel{};
-auto view = View{TFT_WIDTH, TFT_HEIGHT};
+auto view = View{TFT_WIDTH, TFT_HEIGHT, dataModel};
 auto controller = Controller{};
 
 void nextPage() { view.nextPage(); }
+void nextSensor() { dataModel.nextSensor(); }
 
 button_handlers_t buttonEventHandlers = {
-    .io14_handleClick = nullptr,
+    .io14_handleClick = nextSensor,
     .io14_handleDoubleClick = nullptr,
-    .io14_handleLongPressStart = Backlight::startDecreaseBrightness,
-    .io14_handleLongPressStop = Backlight::stopDecreaseBrightness,
+    .io14_handleLongPressStart = Backlight::startIncreaseBrightness,
+    .io14_handleLongPressStop = Backlight::stopIncreaseBrightness,
     .boot_handleClick = nextPage,
     .boot_handleDoubleClick = nullptr,
-    .boot_handleLongPressStart = Backlight::startIncreaseBrightness,
+    .boot_handleLongPressStart = Backlight::startDecreaseBrightness,
     .boot_handleLongPressStop = Backlight::stopDecreaseBrightness};
 
 void reconnect() {
@@ -67,6 +66,7 @@ void reconnect() {
       auto success = pubSubClient.subscribe("/home/sensors/+");
       assert(success);
     } else {
+      view.incrementDisconnects();
       log_e("Could not connect to MQTT server, rc=%d", pubSubClient.state());
       delay(5000);
       WiFi.disconnect();
@@ -102,8 +102,17 @@ void setup() {
 
   log_i("WiFi connected: %s", WiFi.localIP().toString().c_str());
 
+  // Timezone for Amsterdam
+
   // Get system time from NTP server
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  configTime(0, 0, ntpServer);
+  setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+  tzset();
+
+  tm timeinfo;
+  if (getLocalTime(&timeinfo)) {
+    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+  }
 
   // Configure MQTT server connection
   pubSubClient.setServer(mqttServer, MQTT_PORT);
@@ -111,13 +120,13 @@ void setup() {
 
   auto rc = xTaskCreatePinnedToCore(
       +[](void *param) { controller.controllerTask(param); }, "controller",
-      4096, nullptr, 1, nullptr, 1);
+      8192, nullptr, 1, nullptr, 1);
   assert(rc == pdPASS);
 
   auto pvDataManager = static_cast<void *>(&dataModel);
   rc = xTaskCreatePinnedToCore(
-      +[](void *param) { view.updateTask(param); }, "display", 6144,
-      pvDataManager, 1, nullptr, 1);
+      +[](void *param) { view.updateTask(param); }, "display", 8192, nullptr, 1,
+      nullptr, 1);
   assert(rc == pdPASS);
 }
 
