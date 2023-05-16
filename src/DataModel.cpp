@@ -26,6 +26,7 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   auto strSensorTypeName = doc["sen"].as<String>();
   auto temperature = doc["temp"].as<float>();
   auto humidity = doc["hum"].as<float>();
+  auto battery = doc["battery"].as<uint32_t>();
 
   // Extract sensor location = last path element of topic
   auto strTopic = String(topic);
@@ -34,7 +35,7 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   auto strLocation = strTopic.substring(pos + 1);
 
   // Find the corresponding sensor pstats for the incoming MQTT message
-  sensorStats_t *pstats{nullptr};
+  SensorStats *pstats{nullptr};
   int foundIndex = -1;
 
   int index{0};
@@ -50,9 +51,7 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
 
   if (!pstats) {
     // Create a new entry if not found
-    pstats = &sensorStats_.emplace_back();
-    pstats->sensorTypeName = strSensorTypeName;
-    pstats->sensorLocation = strLocation;
+    pstats = &sensorStats_.emplace_back(strSensorTypeName, strLocation);
     foundIndex = sensorStats_.size() - 1;
   }
 
@@ -60,10 +59,9 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
 
   pstats->temperature = temperature;
   pstats->humidity = humidity;
+  pstats->battery = battery;
 
-  datapoint_t sample{.temperature = temperature, .humidity = humidity};
-
-  pstats->samples.push_back(sample);
+  pstats->samples.emplace_back(temperature, humidity);
 
   if (pstats->samples.size() == SAMPLES_PER_DATAPOINT) {
     // Compute average temperature and humidity for
@@ -80,9 +78,7 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
     log_d("average temperature: %.2f", temperatureAvg);
     log_d("average sample humidity: %.2f", humidityAvg);
 
-    datapoint_t dp{.temperature = temperatureAvg, .humidity = humidityAvg};
-
-    pstats->datapoints.push_back(dp);
+    pstats->datapoints.emplace_back(temperatureAvg, humidityAvg);
     if (pstats->datapoints.size() > MAX_DATAPOINTS) {
       pstats->datapoints.pop_front();
     }
@@ -103,11 +99,12 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
 ViewModel DataModel::getViewModel() {
   xSemaphoreTake(mutex_, portMAX_DELAY);
 
-  const sensorStats_t &stats = sensorStats_[sensorIndex_];
+  const SensorStats &stats = sensorStats_[sensorIndex_];
   ViewModel vm{};
 
   vm.sensorTypeName = stats.sensorTypeName;
   vm.sensorLocation = stats.sensorLocation;
+  vm.battery = stats.battery;
 
   vm.temperature = vm.minTemperature = vm.maxTemperature = stats.temperature;
   vm.humidity = vm.minHumidity = vm.maxHumidity = stats.humidity;

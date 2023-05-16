@@ -1,5 +1,6 @@
 #include "View.h"
 #include "DataModel.h"
+#include "esp_adc_cal.h"
 #include "humidity.h"
 #include "thermometer.h"
 #include <Arduino.h>
@@ -17,6 +18,9 @@
 #define HOURS_PER_DIVISION 4
 #define SECS_PER_HOUR 3600
 #define PIXELS_PER_HOUR 15
+#define BAT_ADC 4
+
+uint32_t getBatteryCharge(uint32_t voltage);
 
 #define SAMPLE_INTERVAL_SECS 60 // one minute
 const uint32_t datapointInterval_secs =
@@ -24,12 +28,21 @@ const uint32_t datapointInterval_secs =
 
 const uint32_t backgroundColor = TFT_WHITE;
 
+static uint32_t readADC_Cal(int ADC_Raw) {
+  esp_adc_cal_characteristics_t adc_chars;
+
+  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100,
+                           &adc_chars);
+  return (esp_adc_cal_raw_to_voltage(ADC_Raw, &adc_chars));
+}
+
 /* clang-format off */
 View::View(uint32_t width, uint32_t height, DataModel& dataModel) : 
   width_{width}, 
   height_{height}, 
   dataModel_{dataModel},
-  tft_{TFT_eSPI()} {
+  tft_{TFT_eSPI()},
+  customGreen_{tft_.color565(0, 204, 0)} {
     dataModel.setView(this);
   }
 /* clang-format on */
@@ -89,33 +102,39 @@ void View::renderMainPage_() {
   displaySprite.fillSprite(TFT_WHITE);
 
   displaySprite.pushImage(16, 8, 32, 64, thermometer);
-  auto strTemperature = String(vm_.temperature, 1) + "°C";
-  // detailSprite.createSprite(90, 26);
-  // detailSprite.fillSprite(backgroundColor);
+  displaySprite.pushImage(160, 12, 32, 40, humidity);
+
   displaySprite.loadFont(large);
   displaySprite.setTextColor(TFT_BLACK, backgroundColor);
-  displaySprite.drawString(strTemperature, 56, 22, 4);
-  // detailSprite.pushToSprite(&displaySprite, 56, 22);
-  // detailSprite.deleteSprite();
-
-  displaySprite.pushImage(160, 12, 32, 40, humidity);
+  auto strTemperature = String(vm_.temperature, 1) + "°C";
+  displaySprite.drawString(strTemperature, 56, 22);
   auto strHumidity = String(vm_.humidity, 0) + "%";
-  detailSprite.createSprite(60, 26);
-  detailSprite.fillSprite(backgroundColor);
-  detailSprite.loadFont(large);
-  detailSprite.setTextColor(TFT_BLACK, backgroundColor);
-  detailSprite.drawString(strHumidity, 0, 0, 4);
-  detailSprite.pushToSprite(&displaySprite, 198, 22);
-  detailSprite.deleteSprite();
+  displaySprite.drawString(strHumidity, 198, 22);
+  displaySprite.drawString(vm_.sensorLocation, 56, 52);
+
+  displaySprite.loadFont(small);
+  displaySprite.setTextDatum(TR_DATUM);
+  auto chargePercent = getBatteryCharge(vm_.battery);
+  if (chargePercent <= 10) {
+    displaySprite.setTextColor(TFT_RED);
+  } else if (chargePercent <= 15) {
+    displaySprite.setTextColor(TFT_ORANGE);
+  } else {
+    displaySprite.setTextColor(customGreen_, TFT_WHITE);
+  }
+  auto strBatttery = "BAT: " + String(chargePercent) + "%";
+
+  displaySprite.drawString(strBatttery, width_ - 4, 4);
 
   detailSprite.createSprite(width_, 80);
   detailSprite.fillSprite(TFT_DARKGREY);
   detailSprite.loadFont(small);
-  detailSprite.setTextColor(TFT_WHITE, TFT_DARKGREY);
+  detailSprite.setTextColor(TFT_WHITE, TFT_BLACK);
 
   int32_t y = 4;
-  auto strLocation = "Location: " + vm_.sensorLocation;
-  detailSprite.drawString(strLocation, 4, y);
+  auto strMinMax = "MIN: " + String(vm_.minTemperature, 1);
+  strMinMax += "°C, MAX: " + String(vm_.maxTemperature, 1) + "°C";
+  detailSprite.drawString(strMinMax, 4, y);
 
   y += 17;
   auto strCounter = "Counter: " + String(updateCounter_++);
@@ -123,14 +142,20 @@ void View::renderMainPage_() {
   detailSprite.drawString(strCounter, 4, y);
 
   y += 17;
-  auto strMinMax = "MIN: " + String(vm_.minTemperature, 1);
-  strMinMax += "°C, MAX: " + String(vm_.maxTemperature, 1) + "°C";
-  detailSprite.drawString(strMinMax, 4, y);
+  uint32_t battery_mv = readADC_Cal(analogRead(BAT_ADC)) * 2;
 
-  auto battery_mv = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
+  // auto battery_mv = (analogRead(4) * 2 * 3.3 * 1000) / 4096;
+  auto strBattery2 =
+      "Display BAT: " + String(getBatteryCharge(battery_mv)) + "%";
+  detailSprite.drawString(strBattery2, 4, y);
+
   y += 17;
-  auto strBattery = "Battery: " + String(battery_mv / 1000., 2) + "V";
-  detailSprite.drawString(strBattery, 4, y);
+  tm timeinfo;
+  char buf[64];
+  getLocalTime(&timeinfo);
+  strftime(buf, sizeof(buf), "%c", &timeinfo);
+  detailSprite.drawString(buf, 4, y);
+
   detailSprite.pushToSprite(&displaySprite, 0, height_ - 80);
   detailSprite.deleteSprite();
 

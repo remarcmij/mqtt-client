@@ -7,33 +7,39 @@
 #define SAMPLES_PER_DATAPOINT 4
 #define MAX_DATAPOINTS 300
 
-struct datapoint_t {
+struct Datapoint {
   float temperature;
   float humidity;
+  Datapoint(float temperature, float humidity)
+      : temperature{temperature}, humidity{humidity} {}
 };
 
-struct sensorStats_t {
+struct SensorStats {
   String sensorTypeName;
   String sensorLocation;
   float temperature;
   float humidity;
-  std::deque<datapoint_t> samples;
-  std::deque<datapoint_t> datapoints;
+  uint32_t battery;
+  std::deque<Datapoint> samples;
+  std::deque<Datapoint> datapoints;
+  SensorStats(const String &sensorTypeName, const String &sensorLocation)
+      : sensorTypeName{sensorTypeName}, sensorLocation{sensorLocation} {}
 };
 
 struct ViewModel {
   String sensorTypeName;
   String sensorLocation;
   float temperature;
+  uint32_t battery;
   float minTemperature;
   float maxTemperature;
   float humidity;
   float minHumidity;
   float maxHumidity;
-  std::vector<datapoint_t> datapoints;
+  std::vector<Datapoint> datapoints;
 };
 
-typedef void (*displayCallback_t)(const sensorStats_t &sensorStats);
+typedef void (*displayCallback_t)(const SensorStats &sensorStats);
 
 class DataModel {
 public:
@@ -45,6 +51,6 @@ public:
 private:
   IView *view_;
   int sensorIndex_{0};
-  std::vector<sensorStats_t> sensorStats_{};
+  std::vector<SensorStats> sensorStats_{};
   SemaphoreHandle_t mutex_{xSemaphoreCreateMutex()};
 };

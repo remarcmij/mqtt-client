@@ -25,6 +25,7 @@ private:
   uint32_t disconnectCount_{0};
   ViewModel vm_;
   SemaphoreHandle_t mutex_{xSemaphoreCreateMutex()};
+  uint16_t customGreen_;
 
   void render_();
   void renderMainPage_();
