@@ -17,13 +17,15 @@ struct Datapoint {
 struct SensorStats {
   String sensorTypeName;
   String sensorLocation;
+  uint32_t sampleCount;
   float temperature;
   float humidity;
   uint32_t battery;
   std::deque<Datapoint> samples;
   std::deque<Datapoint> datapoints;
   SensorStats(const String &sensorTypeName, const String &sensorLocation)
-      : sensorTypeName{sensorTypeName}, sensorLocation{sensorLocation} {}
+      : sensorTypeName{sensorTypeName}, sensorLocation{sensorLocation},
+        sampleCount{0} {}
 };
 
 struct ViewModel {
@@ -50,7 +52,7 @@ public:
 
 private:
   IView *view_;
-  int sensorIndex_{0};
+  int displaySensorIndex_{0};
   std::vector<SensorStats> sensorStats_{};
   SemaphoreHandle_t mutex_{xSemaphoreCreateMutex()};
 };

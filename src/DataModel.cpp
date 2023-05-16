@@ -6,7 +6,7 @@ void DataModel::setView(IView *view) { view_ = view; }
 
 void DataModel::nextSensor() {
   if (!sensorStats_.empty()) {
-    sensorIndex_ = (sensorIndex_ + 1) % sensorStats_.size();
+    displaySensorIndex_ = (displaySensorIndex_ + 1) % sensorStats_.size();
     view_->update();
   }
 }
@@ -36,14 +36,14 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
 
   // Find the corresponding sensor pstats for the incoming MQTT message
   SensorStats *pstats{nullptr};
-  int foundIndex = -1;
+  int sourceSensorIndex = -1;
 
-  int index{0};
+  int index = 0;
   for (auto &st : sensorStats_) {
     if (st.sensorLocation == strLocation &&
         st.sensorTypeName == strSensorTypeName) {
       pstats = &st;
-      foundIndex = index;
+      sourceSensorIndex = index;
       break;
     }
     index++;
@@ -52,7 +52,7 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   if (!pstats) {
     // Create a new entry if not found
     pstats = &sensorStats_.emplace_back(strSensorTypeName, strLocation);
-    foundIndex = sensorStats_.size() - 1;
+    sourceSensorIndex = sensorStats_.size() - 1;
   }
 
   xSemaphoreTake(mutex_, portMAX_DELAY);
@@ -62,8 +62,14 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   pstats->battery = battery;
 
   pstats->samples.emplace_back(temperature, humidity);
+  // Include a previous batch of samples to compute
+  // some sort of running average.
+  if (pstats->samples.size() > SAMPLES_PER_DATAPOINT * 2) {
+    pstats->samples.pop_front();
+  }
+  pstats->sampleCount++;
 
-  if (pstats->samples.size() == SAMPLES_PER_DATAPOINT) {
+  if (pstats->sampleCount == SAMPLES_PER_DATAPOINT) {
     // Compute average temperature and humidity for
     // the last 6 samples (= last 6 minutes)
     float temperatureTotal{};
@@ -83,23 +89,24 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
       pstats->datapoints.pop_front();
     }
 
-    pstats->samples.clear();
+    pstats->sampleCount = 0;
   }
 
   xSemaphoreGive(mutex_);
 
-  if (foundIndex == sensorIndex_) {
+  if (sourceSensorIndex == displaySensorIndex_) {
     view_->update();
   }
 
-  log_d("samples: %u, datapoints: %u, sensors: %u", pstats->samples.size(),
+  log_d("location: %s, samples: %u, datapoints: %u, sensors: %u",
+        pstats->sensorLocation, pstats->samples.size(),
         pstats->datapoints.size(), sensorStats_.size());
 }
 
 ViewModel DataModel::getViewModel() {
   xSemaphoreTake(mutex_, portMAX_DELAY);
 
-  const SensorStats &stats = sensorStats_[sensorIndex_];
+  const SensorStats &stats = sensorStats_[displaySensorIndex_];
   ViewModel vm{};
 
   vm.sensorTypeName = stats.sensorTypeName;
