@@ -50,6 +50,8 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
     // Not found: create new entry
     pstats =
         &sensorStats_.emplace_back(++nextId_, strSensorTypeName, strLocation);
+    log_d("new sensor(%u): %s, %s", sensorStats_.size(), strSensorTypeName,
+          strLocation);
   } else {
     pstats = &(*it);
   }
@@ -95,9 +97,8 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
 
   view_->update(pstats->id);
 
-  log_d("location: %s, samples: %u, datapoints: %u, sensors: %u",
-        pstats->sensorLocation, pstats->sampleCount, pstats->datapoints.size(),
-        sensorStats_.size());
+  log_d("location: %s, samples: %u, datapoints: %u", pstats->sensorLocation,
+        pstats->sampleCount, pstats->datapoints.size());
 }
 
 std::vector<uint16_t> DataModel::getSensorIds() {
