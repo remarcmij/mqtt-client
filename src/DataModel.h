@@ -31,8 +31,8 @@ struct SensorStats {
 struct ViewModel {
   String sensorTypeName;
   String sensorLocation;
-  float temperature;
   uint32_t battery;
+  float temperature;
   float minTemperature;
   float maxTemperature;
   float humidity;

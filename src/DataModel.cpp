@@ -2,6 +2,15 @@
 #include "ArduinoJson.h"
 #include <algorithm>
 
+namespace {
+void dpMinMax(ViewModel &vm, const Datapoint &dp) {
+  vm.minTemperature = std::min(vm.minTemperature, dp.temperature);
+  vm.maxTemperature = std::max(vm.maxTemperature, dp.temperature);
+  vm.minHumidity = std::min(vm.minHumidity, dp.humidity);
+  vm.maxHumidity = std::max(vm.maxHumidity, dp.humidity);
+}
+}; // namespace
+
 void DataModel::setView(IView *view) { view_ = view; }
 
 void DataModel::nextSensor() {
@@ -99,36 +108,32 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   }
 
   log_d("location: %s, samples: %u, datapoints: %u, sensors: %u",
-        pstats->sensorLocation, pstats->samples.size(),
-        pstats->datapoints.size(), sensorStats_.size());
+        pstats->sensorLocation, pstats->sampleCount, pstats->datapoints.size(),
+        sensorStats_.size());
 }
 
 ViewModel DataModel::getViewModel() {
   xSemaphoreTake(mutex_, portMAX_DELAY);
 
   const SensorStats &stats = sensorStats_[displaySensorIndex_];
-  ViewModel vm{};
 
-  vm.sensorTypeName = stats.sensorTypeName;
-  vm.sensorLocation = stats.sensorLocation;
-  vm.battery = stats.battery;
+  ViewModel vm{.sensorTypeName = stats.sensorTypeName,
+               .sensorLocation = stats.sensorLocation,
+               .battery = stats.battery,
+               .temperature = stats.temperature,
+               .minTemperature = stats.temperature,
+               .maxTemperature = stats.temperature,
+               .humidity = stats.humidity,
+               .minHumidity = stats.humidity,
+               .maxHumidity = stats.humidity};
 
-  vm.temperature = vm.minTemperature = vm.maxTemperature = stats.temperature;
-  vm.humidity = vm.minHumidity = vm.maxHumidity = stats.humidity;
-
-  for (const auto &sample : stats.samples) {
-    vm.minTemperature = std::min(vm.minTemperature, sample.temperature);
-    vm.maxTemperature = std::max(vm.maxTemperature, sample.temperature);
-    vm.minHumidity = std::min(vm.minHumidity, sample.humidity);
-    vm.maxHumidity = std::max(vm.maxHumidity, sample.humidity);
+  for (const auto &dp : stats.samples) {
+    dpMinMax(vm, dp);
   }
 
   for (const auto &dp : stats.datapoints) {
     vm.datapoints.emplace_back(dp);
-    vm.minTemperature = std::min(vm.minTemperature, dp.temperature);
-    vm.maxTemperature = std::max(vm.maxTemperature, dp.temperature);
-    vm.minHumidity = std::min(vm.minHumidity, dp.humidity);
-    vm.maxHumidity = std::max(vm.maxHumidity, dp.humidity);
+    dpMinMax(vm, dp);
   }
 
   xSemaphoreGive(mutex_);
