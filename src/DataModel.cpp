@@ -1,6 +1,7 @@
 #include "DataModel.h"
 #include "ArduinoJson.h"
 #include <algorithm>
+#include <ctime>
 
 namespace {
 void dpMinMax(ViewModel &vm, const Datapoint &dp) {
@@ -12,13 +13,6 @@ void dpMinMax(ViewModel &vm, const Datapoint &dp) {
 }; // namespace
 
 void DataModel::setView(IView *view) { view_ = view; }
-
-void DataModel::nextSensor() {
-  if (!sensorStats_.empty()) {
-    displaySensorIndex_ = (displaySensorIndex_ + 1) % sensorStats_.size();
-    view_->update();
-  }
-}
 
 void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
   Serial.print("[");
@@ -45,23 +39,19 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
 
   // Find the corresponding sensor pstats for the incoming MQTT message
   SensorStats *pstats{nullptr};
-  int sourceSensorIndex = -1;
 
-  int index = 0;
-  for (auto &st : sensorStats_) {
-    if (st.sensorLocation == strLocation &&
-        st.sensorTypeName == strSensorTypeName) {
-      pstats = &st;
-      sourceSensorIndex = index;
-      break;
-    }
-    index++;
-  }
+  auto it = std::find_if(sensorStats_.begin(), sensorStats_.end(),
+                         [&](const auto &st) {
+                           return st.sensorLocation == strLocation &&
+                                  st.sensorTypeName == strSensorTypeName;
+                         });
 
-  if (!pstats) {
-    // Create a new entry if not found
-    pstats = &sensorStats_.emplace_back(strSensorTypeName, strLocation);
-    sourceSensorIndex = sensorStats_.size() - 1;
+  if (it == sensorStats_.end()) {
+    // Not found: create new entry
+    pstats =
+        &sensorStats_.emplace_back(++nextId_, strSensorTypeName, strLocation);
+  } else {
+    pstats = &(*it);
   }
 
   xSemaphoreTake(mutex_, portMAX_DELAY);
@@ -103,19 +93,33 @@ void DataModel::mqttUpdate(char *topic, byte *payloadRaw, unsigned int length) {
 
   xSemaphoreGive(mutex_);
 
-  if (sourceSensorIndex == displaySensorIndex_) {
-    view_->update();
-  }
+  view_->update(pstats->id);
 
   log_d("location: %s, samples: %u, datapoints: %u, sensors: %u",
         pstats->sensorLocation, pstats->sampleCount, pstats->datapoints.size(),
         sensorStats_.size());
 }
 
-ViewModel DataModel::getViewModel() {
+std::vector<uint16_t> DataModel::getSensorIds() {
+  std::vector<uint16_t> sensorIds;
+
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  for (const auto &stats : sensorStats_) {
+    sensorIds.push_back(stats.id);
+  }
+  xSemaphoreGive(mutex_);
+
+  return sensorIds;
+}
+
+ViewModel DataModel::getViewModel(uint16_t sensorId) {
   xSemaphoreTake(mutex_, portMAX_DELAY);
 
-  const SensorStats &stats = sensorStats_[displaySensorIndex_];
+  auto it = std::find_if(sensorStats_.begin(), sensorStats_.end(),
+                         [=](const auto &st) { return st.id == sensorId; });
+  assert(it != sensorStats_.end());
+
+  const SensorStats &stats = *it;
 
   ViewModel vm{.sensorTypeName = stats.sensorTypeName,
                .sensorLocation = stats.sensorLocation,

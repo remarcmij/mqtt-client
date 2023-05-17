@@ -53,10 +53,15 @@ void View::init() {
   std::swap(width_, height_);
 }
 
-void View::update() {
-  vm_ = dataModel_.getViewModel();
-  render_();
-  updateCounter_ = 0;
+void View::update(uint16_t sensorId) {
+  if (currentSensorId_ == 0) {
+    currentSensorId_ = sensorId;
+  }
+  if (sensorId == currentSensorId_) {
+    vm_ = dataModel_.getViewModel(sensorId);
+    render_();
+    updateCounter_ = 0;
+  }
 }
 
 void View::updateTask(void *param) {
@@ -68,10 +73,23 @@ void View::updateTask(void *param) {
 }
 
 void View::nextPage() {
-  // if (!vm_.datapoints.empty()) {
   pageIndex_ = (pageIndex_ + 1) % NUM_PAGES;
   render_();
-  // }
+}
+
+void View::nextSensor() {
+  auto sensorIds = dataModel_.getSensorIds();
+
+  for (int i = 0; i < sensorIds.size(); i++) {
+    if (sensorIds[i] == currentSensorId_) {
+      int next = (i + 1) % sensorIds.size();
+      currentSensorId_ = sensorIds[next];
+      update(currentSensorId_);
+      return;
+    }
+  }
+
+  assert(false);
 }
 
 void View::incrementDisconnects() { disconnectCount_++; }

@@ -10,9 +10,10 @@ class View : IView {
 public:
   View(uint32_t width, uint32_t height, DataModel &dataModel);
   void init();
-  virtual void update() override;
+  virtual void update(uint16_t sensorId) override;
   void updateTask(void *param);
   void nextPage();
+  void nextSensor();
   void incrementDisconnects();
 
 private:
@@ -23,6 +24,7 @@ private:
   uint32_t updateCounter_{0};
   uint32_t pageIndex_{0};
   uint32_t disconnectCount_{0};
+  uint16_t currentSensorId_{0};
   ViewModel vm_;
   SemaphoreHandle_t mutex_{xSemaphoreCreateMutex()};
   uint16_t customGreen_;

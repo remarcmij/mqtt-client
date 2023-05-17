@@ -13,11 +13,9 @@
 #define MAX_SAMPLES 240
 
 namespace {
-
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
 const char *mqttServer = MQTT_SERVER;
-
 const char *ntpServer = "time.google.com";
 
 auto wifiClient = WiFiClient{};
@@ -27,7 +25,7 @@ auto view = View{TFT_WIDTH, TFT_HEIGHT, dataModel};
 auto controller = Controller{};
 
 void nextPage() { view.nextPage(); }
-void nextSensor() { dataModel.nextSensor(); }
+void nextSensor() { view.nextSensor(); }
 
 button_handlers_t buttonEventHandlers = {
     .io14_handleClick = nextSensor,
@@ -123,7 +121,6 @@ void setup() {
       8192, nullptr, 1, nullptr, 1);
   assert(rc == pdPASS);
 
-  auto pvDataManager = static_cast<void *>(&dataModel);
   rc = xTaskCreatePinnedToCore(
       +[](void *param) { view.updateTask(param); }, "display", 8192, nullptr, 1,
       nullptr, 1);

@@ -15,6 +15,7 @@ struct Datapoint {
 };
 
 struct SensorStats {
+  long id;
   String sensorTypeName;
   String sensorLocation;
   uint32_t sampleCount;
@@ -23,8 +24,9 @@ struct SensorStats {
   uint32_t battery;
   std::deque<Datapoint> samples;
   std::deque<Datapoint> datapoints;
-  SensorStats(const String &sensorTypeName, const String &sensorLocation)
-      : sensorTypeName{sensorTypeName}, sensorLocation{sensorLocation},
+  SensorStats(long id, const String &sensorTypeName,
+              const String &sensorLocation)
+      : id{id}, sensorTypeName{sensorTypeName}, sensorLocation{sensorLocation},
         sampleCount{0} {}
 };
 
@@ -47,12 +49,12 @@ class DataModel {
 public:
   void setView(IView *view);
   void mqttUpdate(char *topic, byte *payloadRaw, unsigned int length);
-  void nextSensor();
-  ViewModel getViewModel();
+  std::vector<uint16_t> getSensorIds();
+  ViewModel getViewModel(uint16_t sensorId);
 
 private:
   IView *view_;
-  int displaySensorIndex_{0};
+  uint16_t nextId_{0};
   std::vector<SensorStats> sensorStats_{};
   SemaphoreHandle_t mutex_{xSemaphoreCreateMutex()};
 };
