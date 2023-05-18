@@ -49,8 +49,8 @@ class DataModel {
 public:
   void setView(IView *view);
   void mqttUpdate(char *topic, byte *payloadRaw, unsigned int length);
-  std::vector<uint16_t> getSensorIds();
-  ViewModel getViewModel(uint16_t sensorId);
+  std::vector<uint16_t> getSensorIds() const;
+  ViewModel getViewModel(uint16_t sensorId) const;
 
 private:
   IView *view_;
