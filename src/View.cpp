@@ -84,6 +84,8 @@ void View::nextSensor() {
     if (sensorIds[i] == currentSensorId_) {
       int next = (i + 1) % sensorIds.size();
       currentSensorId_ = sensorIds[next];
+      // Reset to initial page
+      pageIndex_ = 0;
       update(currentSensorId_);
       return;
     }
