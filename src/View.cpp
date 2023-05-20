@@ -268,6 +268,11 @@ void View::renderGraphPage_(GraphType graphType) {
         graphSprite.fillCircle(--x, height_ - y - axis_px, 2, TFT_RED);
       });
 
+  graphSprite.loadFont(large);
+  graphSprite.setTextDatum(TL_DATUM);
+  graphSprite.setTextColor(TFT_WHITE, TFT_LIGHTGREY, true);
+  graphSprite.drawString(vm_.sensorLocation, axis_px + 8, 8);
+
   graphSprite.pushToSprite(&displaySprite, 0, 0);
 
   displaySprite.pushSprite(0, 0);
